@@ -103,7 +103,208 @@ public class RealWeatherHtmlParser
 
         Log.Debug("  Extracted date: {Date} (validated against filename)", parsedDate);
 
-        return new HtmlParseResult(cityName, parsedDate);
+        // Extract weather data rows from the archive table
+        var weatherDataRows = ParseWeatherDataTable(doc, filePath);
+
+        Log.Debug("  Extracted {RowCount} weather data rows", weatherDataRows.Count);
+
+        return new HtmlParseResult(cityName, parsedDate, weatherDataRows);
+    }
+
+    /// <summary>
+    /// Parses the weather data table from the HTML document.
+    /// </summary>
+    /// <param name="doc">The HTML document.</param>
+    /// <param name="filePath">The file path for error reporting.</param>
+    /// <returns>List of weather data rows from the archive table.</returns>
+    private List<WeatherDataRow> ParseWeatherDataTable(HtmlDocument doc, string filePath)
+    {
+        var rows = new List<WeatherDataRow>();
+
+        // Find the archive table with headers: Время, Характеристики погоды, Температура воздуха, Ветер м/с, Атм. дав., Влажность воздуха %
+        // The table has class "archive_table table"
+        var tableXPath = "//table[@class='archive_table table']";
+        var table = doc.DocumentNode.SelectSingleNode(tableXPath);
+
+        if (table == null)
+        {
+            throw new InvalidOperationException(
+                $"Archive table not found by XPath '{tableXPath}' in file '{filePath}'");
+        }
+
+        // Get all data rows (skip the header row)
+        var dataRows = table.SelectNodes(".//tr[td[@class='at_l at_time']]");
+        
+        if (dataRows == null || dataRows.Count == 0)
+        {
+            Log.Warning("No data rows found in archive table in file '{FilePath}'", filePath);
+            return rows;
+        }
+
+        foreach (var row in dataRows)
+        {
+            var cells = row.SelectNodes(".//td");
+            if (cells == null || cells.Count < 6)
+            {
+                Log.Warning("Invalid row structure in archive table in file '{FilePath}'. Expected 6 columns, found {ColumnCount}", 
+                    filePath, cells?.Count ?? 0);
+                continue;
+            }
+
+            // Extract time (column 1) - format: "HH:mm"
+            var time = ExtractTextFromCell(cells[0], filePath, "time");
+
+            // Extract weather characteristics (column 2) - text from ov_hide div
+            var weatherCharacteristics = ExtractWeatherCharacteristics(cells[1], filePath);
+
+            // Extract temperature (column 3) - format: "+5°C" or "-5°C"
+            var temperature = ExtractTextFromCell(cells[2], filePath, "temperature");
+
+            // Extract wind direction and speed (column 4)
+            var (windDirection, windSpeed) = ExtractWindDirectionAndSpeed(cells[3], filePath);
+
+            // Extract atmospheric pressure (column 5) - format: "740"
+            var atmosphericPressure = ExtractTextFromCell(cells[4], filePath, "atmospheric pressure");
+
+            // Extract humidity (column 6) - format: "93"
+            var humidity = ExtractTextFromCell(cells[5], filePath, "humidity");
+
+            rows.Add(new WeatherDataRow(
+                time,
+                weatherCharacteristics,
+                temperature,
+                windDirection,
+                windSpeed,
+                atmosphericPressure,
+                humidity));
+        }
+
+        return rows;
+    }
+
+    /// <summary>
+    /// Extracts text content from a table cell, handling nested divs and spans.
+    /// </summary>
+    /// <param name="cell">The table cell node.</param>
+    /// <param name="filePath">The file path for error reporting.</param>
+    /// <param name="fieldName">The field name for error reporting.</param>
+    /// <returns>The extracted text, never null.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the cell is null or the text cannot be extracted.</exception>
+    private string ExtractTextFromCell(HtmlNode cell, string filePath, string fieldName)
+    {
+        if (cell == null)
+        {
+            throw new InvalidOperationException(
+                $"Cell is null when extracting {fieldName} in file '{filePath}'");
+        }
+
+        // Get all text nodes, excluding hidden elements (ov_hide class)
+        var textNodes = cell.SelectNodes(".//text()[not(ancestor::*[contains(@class, 'ov_hide')])]");
+        
+        if (textNodes == null || textNodes.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"No text nodes found when extracting {fieldName} in file '{filePath}'");
+        }
+
+        var text = string.Join(" ", textNodes.Select(n => n.InnerText?.Trim()).Where(t => !string.IsNullOrWhiteSpace(t))).Trim();
+        
+        // Clean up multiple spaces
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+        
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            throw new InvalidOperationException(
+                $"Empty or whitespace text found when extracting {fieldName} in file '{filePath}'");
+        }
+
+        return text;
+    }
+
+    /// <summary>
+    /// Extracts weather characteristics from a cell, specifically from the ov_hide div.
+    /// </summary>
+    /// <param name="cell">The table cell node.</param>
+    /// <param name="filePath">The file path for error reporting.</param>
+    /// <returns>The extracted weather characteristics, never null.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the cell is null or weather characteristics cannot be extracted.</exception>
+    private string ExtractWeatherCharacteristics(HtmlNode cell, string filePath)
+    {
+        if (cell == null)
+        {
+            throw new InvalidOperationException(
+                $"Cell is null when extracting weather characteristics in file '{filePath}'");
+        }
+
+        // Find the div with class "ov_hide" which contains the weather description
+        var weatherDiv = cell.SelectSingleNode(".//div[contains(@class, 'ov_hide')]");
+        
+        if (weatherDiv == null)
+        {
+            throw new InvalidOperationException(
+                $"Weather characteristics div (ov_hide) not found in file '{filePath}'");
+        }
+
+        var text = weatherDiv.InnerText?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            throw new InvalidOperationException(
+                $"Empty or whitespace weather characteristics found in file '{filePath}'");
+        }
+
+        return text;
+    }
+
+    /// <summary>
+    /// Extracts wind direction and speed from a cell.
+    /// </summary>
+    /// <param name="cell">The table cell node.</param>
+    /// <param name="filePath">The file path for error reporting.</param>
+    /// <returns>A tuple containing wind direction and speed, neither can be null.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the cell is null or wind information cannot be extracted.</exception>
+    private (string WindDirection, string WindSpeed) ExtractWindDirectionAndSpeed(HtmlNode cell, string filePath)
+    {
+        if (cell == null)
+        {
+            throw new InvalidOperationException(
+                $"Cell is null when extracting wind information in file '{filePath}'");
+        }
+
+        // Extract wind direction from image alt or title attribute
+        string? direction = null;
+        var img = cell.SelectSingleNode(".//img");
+        if (img != null)
+        {
+            var alt = img.GetAttributeValue("alt", string.Empty);
+            var title = img.GetAttributeValue("title", string.Empty);
+            direction = !string.IsNullOrWhiteSpace(alt) ? alt : (!string.IsNullOrWhiteSpace(title) ? title : null);
+        }
+
+        if (string.IsNullOrWhiteSpace(direction))
+        {
+            throw new InvalidOperationException(
+                $"Wind direction not found (missing img alt/title) in file '{filePath}'");
+        }
+
+        // Extract wind speed from text nodes
+        var textNodes = cell.SelectNodes(".//text()[not(ancestor::img)]");
+        var speedText = textNodes != null 
+            ? string.Join(" ", textNodes.Select(n => n.InnerText?.Trim()).Where(t => !string.IsNullOrWhiteSpace(t))).Trim()
+            : null;
+
+        // Clean up speed text (remove extra spaces)
+        if (!string.IsNullOrWhiteSpace(speedText))
+        {
+            speedText = System.Text.RegularExpressions.Regex.Replace(speedText, @"\s+", " ");
+        }
+
+        if (string.IsNullOrWhiteSpace(speedText))
+        {
+            throw new InvalidOperationException(
+                $"Wind speed not found in file '{filePath}'");
+        }
+
+        return (direction, speedText);
     }
 
     /// <summary>
