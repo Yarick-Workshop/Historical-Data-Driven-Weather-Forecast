@@ -2,6 +2,7 @@
 using Serilog;
 using System.IO;
 using System.Diagnostics;
+using Historical.Weather.Data.Miner;
 
 // Initialize Serilog for console logging
 Log.Logger = new LoggerConfiguration()
@@ -59,8 +60,8 @@ try
         
         try
         {
-            // Parse the HTML file
-            var doc = htmlParser.ParseFile(file);
+            // Parse the HTML file (all parsing logic is inside ParseFile)
+            htmlParser.ParseFile(file);
             
             successfulCount++;
             Log.Debug("Successfully parsed HTML file: {FilePath}", file);
