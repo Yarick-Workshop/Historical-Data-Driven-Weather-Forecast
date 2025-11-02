@@ -1,7 +1,6 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Serilog;
 using System.IO;
-using HtmlAgilityPack;
 using System.Diagnostics;
 
 // Initialize Serilog for console logging
@@ -48,6 +47,9 @@ try
     int unsuccessfulCount = 0;
     long totalFileProcessingTime = 0;
 
+    // Initialize HTML parser
+    var htmlParser = new RealWeatherHtmlParser();
+
     // Parse each HTML file
     foreach (var file in files)
     {
@@ -57,17 +59,8 @@ try
         
         try
         {
-            // Load and parse the HTML file
-            var doc = new HtmlDocument();
-            doc.OptionCheckSyntax = true;
-            doc.Load(file);
-            
-            // Check for parsing errors
-            if (doc.ParseErrors != null && doc.ParseErrors.Count() > 0)
-            {
-                var errors = string.Join("; ", doc.ParseErrors.Select(e => $"{e.Code}: {e.Reason} (Line {e.Line}, Column {e.LinePosition})"));
-                throw new InvalidOperationException($"Malformed HTML in file '{file}': {errors}");
-            }
+            // Parse the HTML file
+            var doc = htmlParser.ParseFile(file);
             
             successfulCount++;
             Log.Debug("Successfully parsed HTML file: {FilePath}", file);
