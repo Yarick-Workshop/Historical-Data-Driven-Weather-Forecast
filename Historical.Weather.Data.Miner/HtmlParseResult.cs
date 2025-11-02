@@ -11,12 +11,20 @@ public class HtmlParseResult
     public string? CityName { get; }
 
     /// <summary>
+    /// Gets the date extracted from the title and validated against the filename.
+    /// Format: YYYY-MM-dd (e.g., "2016-12-10").
+    /// </summary>
+    public string? Date { get; }
+
+    /// <summary>
     /// Initializes a new instance of the HtmlParseResult class.
     /// </summary>
     /// <param name="cityName">The city name extracted from the title.</param>
-    public HtmlParseResult(string? cityName)
+    /// <param name="date">The date extracted from the title in YYYY-MM-dd format.</param>
+    public HtmlParseResult(string? cityName, string? date)
     {
         CityName = cityName;
+        Date = date;
     }
 }
 

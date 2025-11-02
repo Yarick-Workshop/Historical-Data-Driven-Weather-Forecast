@@ -1,6 +1,8 @@
 using HtmlAgilityPack;
 using System.Text.RegularExpressions;
 using Serilog;
+using System.Globalization;
+using System.IO;
 
 namespace Historical.Weather.Data.Miner;
 
@@ -14,6 +16,34 @@ public class RealWeatherHtmlParser
     private static readonly Regex CityNameRegex = new Regex(
         @"Архив\s+погоды\s+в\s+(.*?)\.\s+Погода",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// Compiled regex pattern to extract date from title.
+    /// Pattern matches "за [Day] [Month] [Year] года" where Month is in Russian.
+    /// Example: "за 10 декабрь 2016 года"
+    /// </summary>
+    private static readonly Regex DateRegex = new Regex(
+        @"за\s+(\d+)\s+(январь|февраль|март|апрель|май|июнь|июль|август|сентябрь|октябрь|ноябрь|декабрь)\s+(\d{4})\s+года",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// Russian month names mapped to month numbers (1-12).
+    /// </summary>
+    private static readonly Dictionary<string, int> RussianMonths = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+    {
+        { "январь", 1 },
+        { "февраль", 2 },
+        { "март", 3 },
+        { "апрель", 4 },
+        { "май", 5 },
+        { "июнь", 6 },
+        { "июль", 7 },
+        { "август", 8 },
+        { "сентябрь", 9 },
+        { "октябрь", 10 },
+        { "ноябрь", 11 },
+        { "декабрь", 12 }
+    };
 
     /// <summary>
     /// Loads and parses an HTML file, checking for syntax errors.
@@ -45,7 +75,121 @@ public class RealWeatherHtmlParser
 
         Log.Debug("  Extracted city: {CityName}", cityName);
 
-        return new HtmlParseResult(cityName);
+        // Extract date from title - get title text and apply date regex
+        var titleElement = doc.DocumentNode.SelectSingleNode("/html/head/title");
+        if (titleElement == null)
+        {
+            throw new InvalidOperationException($"Title element not found in file '{filePath}'");
+        }
+        
+        var titleText = titleElement.InnerText?.Trim();
+        if (string.IsNullOrWhiteSpace(titleText))
+        {
+            throw new InvalidOperationException($"Title element has empty or null text in file '{filePath}'");
+        }
+
+        // Parse date to YYYY-MM-dd format
+        var parsedDate = ParseRussianDateToYYYYMMDD(titleText, filePath);
+
+        // Extract date from filename
+        var dateFromFilename = ExtractDateFromFilename(filePath);
+
+        // Self-test: compare dates
+        if (parsedDate != dateFromFilename)
+        {
+            throw new InvalidOperationException(
+                $"Date mismatch in file '{filePath}': Date from title '{parsedDate}' does not match date from filename '{dateFromFilename}'");
+        }
+
+        Log.Debug("  Extracted date: {Date} (validated against filename)", parsedDate);
+
+        return new HtmlParseResult(cityName, parsedDate);
+    }
+
+    /// <summary>
+    /// Parses a Russian date string (e.g., "10 декабрь 2016") to YYYY-MM-dd format.
+    /// </summary>
+    /// <param name="dateString">The date string in format "day month_name year" (e.g., "10 декабрь 2016").</param>
+    /// <param name="filePath">The file path for error reporting.</param>
+    /// <returns>Date in YYYY-MM-dd format (e.g., "2016-12-10").</returns>
+    private string ParseRussianDateToYYYYMMDD(string dateString, string filePath)
+    {
+        var match = DateRegex.Match(dateString);
+        if (!match.Success || match.Groups.Count < 4)
+        {
+            throw new InvalidOperationException(
+                $"Failed to parse date from string '{dateString}' in file '{filePath}'");
+        }
+
+        var day = match.Groups[1].Value;
+        var monthName = match.Groups[2].Value;
+        var year = match.Groups[3].Value;
+
+        if (!RussianMonths.TryGetValue(monthName, out var month))
+        {
+            throw new InvalidOperationException(
+                $"Unknown Russian month name '{monthName}' in file '{filePath}'");
+        }
+
+        if (!int.TryParse(day, out var dayInt) || dayInt < 1 || dayInt > 31)
+        {
+            throw new InvalidOperationException(
+                $"Invalid day value '{day}' in file '{filePath}'");
+        }
+
+        if (!int.TryParse(year, out var yearInt))
+        {
+            throw new InvalidOperationException(
+                $"Invalid year value '{year}' in file '{filePath}'");
+        }
+
+        try
+        {
+            var date = new DateTime(yearInt, month, dayInt);
+            return date.ToString("yyyy-MM-dd");
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            throw new InvalidOperationException(
+                $"Invalid date '{day}-{month}-{year}' in file '{filePath}'", ex);
+        }
+    }
+
+    /// <summary>
+    /// Extracts date in YYYY-MM-dd format from filename.
+    /// Expected filename format: "YYYY-M-D.html" or "YYYY-MM-DD.html" or "path/to/YYYY-M-D.html"
+    /// Handles both single and double digit months and days.
+    /// </summary>
+    /// <param name="filePath">The full file path.</param>
+    /// <returns>Date in YYYY-MM-dd format (e.g., "2016-12-10").</returns>
+    private string ExtractDateFromFilename(string filePath)
+    {
+        var fileName = Path.GetFileName(filePath);
+        // Match YYYY-M-D or YYYY-MM-DD format (handles single and double digits for month and day)
+        var dateRegex = new Regex(@"(\d{4})-(\d{1,2})-(\d{1,2})", RegexOptions.Compiled);
+        
+        var match = dateRegex.Match(fileName);
+        if (!match.Success || match.Groups.Count < 4)
+        {
+            throw new InvalidOperationException(
+                $"Could not extract date from filename '{fileName}' in file path '{filePath}'. Expected format: YYYY-M-D.html or YYYY-MM-DD.html");
+        }
+
+        var year = match.Groups[1].Value;
+        var month = match.Groups[2].Value;
+        var day = match.Groups[3].Value;
+
+        // Parse to ensure valid date and normalize to YYYY-MM-dd format
+        var dateStr = $"{year}-{month.PadLeft(2, '0')}-{day.PadLeft(2, '0')}";
+        
+        // Validate the extracted date format
+        if (!DateTime.TryParseExact(dateStr, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
+        {
+            throw new InvalidOperationException(
+                $"Invalid date format '{dateStr}' extracted from filename '{fileName}' in file path '{filePath}'");
+        }
+
+        return parsedDate.ToString("yyyy-MM-dd");
     }
 
     private string ExtractSingleMatchByXPathAndRegex(
