@@ -336,3 +336,7 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
 
+# HTML log files
+HtmlLog_*/
+result*.html
+
