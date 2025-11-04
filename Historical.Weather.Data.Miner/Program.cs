@@ -1,12 +1,24 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Serilog;
+using Serilog.Events;
 using System.IO;
 using System.Diagnostics;
 using Historical.Weather.Data.Miner;
+using HtmlLogWriter;
 
-// Initialize Serilog for console logging
+// Generate DateTime-based log file path
+var logDateTime = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+var logDirectory = $"HtmlLog_{logDateTime}";
+var logFilePath = Path.Combine(logDirectory, $"result{logDateTime}.html");
+
+// Initialize Serilog for console and HTML logging
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
+    .WriteTo.HtmlLog(logFilePath, "Historical Weather Data Miner")
+        .Filter.ByIncludingOnly(evt => 
+            evt.Level == LogEventLevel.Information || 
+            evt.Level == LogEventLevel.Error || 
+            evt.Level == LogEventLevel.Fatal)
     .MinimumLevel.Debug()
     .CreateLogger();
 

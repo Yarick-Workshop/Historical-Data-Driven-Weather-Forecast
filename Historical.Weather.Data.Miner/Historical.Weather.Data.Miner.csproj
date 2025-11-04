@@ -21,4 +21,8 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\HtmlLogWriter\HtmlLogWriter.csproj" />
+  </ItemGroup>
+
 </Project>
