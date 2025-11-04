@@ -104,7 +104,8 @@ public class RealWeatherHtmlParser
         Log.Debug("  Extracted date: {Date} (validated against filename)", parsedDate);
 
         // Extract weather data rows from the archive table
-        var weatherDataRows = ParseWeatherDataTable(doc, filePath);
+        var date = DateTime.ParseExact(parsedDate, "yyyy-MM-dd", null);
+        var weatherDataRows = ParseWeatherDataTable(doc, filePath, date);
 
         Log.Debug("  Extracted {RowCount} weather data rows", weatherDataRows.Count);
 
@@ -116,8 +117,9 @@ public class RealWeatherHtmlParser
     /// </summary>
     /// <param name="doc">The HTML document.</param>
     /// <param name="filePath">The file path for error reporting.</param>
+    /// <param name="date">The date to combine with time values.</param>
     /// <returns>List of weather data rows from the archive table.</returns>
-    private List<WeatherDataRow> ParseWeatherDataTable(HtmlDocument doc, string filePath)
+    private List<WeatherDataRow> ParseWeatherDataTable(HtmlDocument doc, string filePath, DateTime date)
     {
         var rows = new List<WeatherDataRow>();
 
@@ -151,23 +153,23 @@ public class RealWeatherHtmlParser
                 continue;
             }
 
-            // Extract time (column 1) - format: "HH:mm"
-            var time = ExtractTextFromCell(cells[0], filePath, "time");
+            // Extract time (column 1) - format: "HH:mm" and combine with date
+            var time = ParseTime(cells[0], filePath, date);
 
             // Extract weather characteristics (column 2) - text from ov_hide div
             var weatherCharacteristics = ExtractWeatherCharacteristics(cells[1], filePath);
 
             // Extract temperature (column 3) - format: "+5°C" or "-5°C"
-            var temperature = ExtractTextFromCell(cells[2], filePath, "temperature");
+            var temperature = ParseTemperature(cells[2], filePath);
 
             // Extract wind direction and speed (column 4)
             var (windDirection, windSpeed) = ExtractWindDirectionAndSpeed(cells[3], filePath);
 
             // Extract atmospheric pressure (column 5) - format: "740"
-            var atmosphericPressure = ExtractTextFromCell(cells[4], filePath, "atmospheric pressure");
+            var atmosphericPressure = ParseAtmosphericPressure(cells[4], filePath);
 
             // Extract humidity (column 6) - format: "93"
-            var humidity = ExtractTextFromCell(cells[5], filePath, "humidity");
+            var humidity = ParseHumidity(cells[5], filePath);
 
             rows.Add(new WeatherDataRow(
                 time,
@@ -260,9 +262,9 @@ public class RealWeatherHtmlParser
     /// </summary>
     /// <param name="cell">The table cell node.</param>
     /// <param name="filePath">The file path for error reporting.</param>
-    /// <returns>A tuple containing wind direction and speed, neither can be null.</returns>
+    /// <returns>A tuple containing wind direction and speed.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the cell is null or wind information cannot be extracted.</exception>
-    private (string WindDirection, string WindSpeed) ExtractWindDirectionAndSpeed(HtmlNode cell, string filePath)
+    private (string WindDirection, decimal WindSpeed) ExtractWindDirectionAndSpeed(HtmlNode cell, string filePath)
     {
         if (cell == null)
         {
@@ -304,7 +306,108 @@ public class RealWeatherHtmlParser
                 $"Wind speed not found in file '{filePath}'");
         }
 
-        return (direction, speedText);
+        // Parse wind speed to decimal
+        if (!decimal.TryParse(speedText, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var windSpeed))
+        {
+            throw new InvalidOperationException(
+                $"Failed to parse wind speed '{speedText}' as decimal in file '{filePath}'");
+        }
+
+        return (direction, windSpeed);
+    }
+
+    /// <summary>
+    /// Parses time from a cell and combines it with the date.
+    /// </summary>
+    /// <param name="cell">The table cell node.</param>
+    /// <param name="filePath">The file path for error reporting.</param>
+    /// <param name="date">The date to combine with the time.</param>
+    /// <returns>The combined date and time.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the time cannot be extracted or parsed.</exception>
+    private DateTime ParseTime(HtmlNode cell, string filePath, DateTime date)
+    {
+        var timeText = ExtractTextFromCell(cell, filePath, "time");
+        
+        // Parse time in format "HH:mm"
+        if (!DateTime.TryParseExact(timeText, "HH:mm", null, System.Globalization.DateTimeStyles.None, out var timeOnly))
+        {
+            throw new InvalidOperationException(
+                $"Failed to parse time '{timeText}' in format 'HH:mm' in file '{filePath}'");
+        }
+
+        // Combine date and time
+        return date.Date.Add(timeOnly.TimeOfDay);
+    }
+
+    /// <summary>
+    /// Parses temperature from a cell (e.g., "+5°C" or "-5°C").
+    /// </summary>
+    /// <param name="cell">The table cell node.</param>
+    /// <param name="filePath">The file path for error reporting.</param>
+    /// <returns>The temperature as an integer in degrees Celsius.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the temperature cannot be extracted or parsed.</exception>
+    private int ParseTemperature(HtmlNode cell, string filePath)
+    {
+        var tempText = ExtractTextFromCell(cell, filePath, "temperature");
+        
+        // Remove °C and whitespace, handle + or - sign
+        var cleanedText = tempText.Replace("°C", "", StringComparison.OrdinalIgnoreCase)
+                                  .Replace("°", "", StringComparison.OrdinalIgnoreCase)
+                                  .Trim();
+        
+        if (!int.TryParse(cleanedText, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var temperature))
+        {
+            throw new InvalidOperationException(
+                $"Failed to parse temperature '{tempText}' as integer in file '{filePath}'");
+        }
+
+        return temperature;
+    }
+
+    /// <summary>
+    /// Parses atmospheric pressure from a cell (e.g., "740").
+    /// </summary>
+    /// <param name="cell">The table cell node.</param>
+    /// <param name="filePath">The file path for error reporting.</param>
+    /// <returns>The atmospheric pressure as an integer.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the atmospheric pressure cannot be extracted or parsed.</exception>
+    private int ParseAtmosphericPressure(HtmlNode cell, string filePath)
+    {
+        var pressureText = ExtractTextFromCell(cell, filePath, "atmospheric pressure");
+        
+        // Remove any whitespace
+        pressureText = pressureText.Trim();
+        
+        if (!int.TryParse(pressureText, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var pressure))
+        {
+            throw new InvalidOperationException(
+                $"Failed to parse atmospheric pressure '{pressureText}' as integer in file '{filePath}'");
+        }
+
+        return pressure;
+    }
+
+    /// <summary>
+    /// Parses humidity from a cell (e.g., "93").
+    /// </summary>
+    /// <param name="cell">The table cell node.</param>
+    /// <param name="filePath">The file path for error reporting.</param>
+    /// <returns>The humidity as an integer percentage.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the humidity cannot be extracted or parsed.</exception>
+    private int ParseHumidity(HtmlNode cell, string filePath)
+    {
+        var humidityText = ExtractTextFromCell(cell, filePath, "humidity");
+        
+        // Remove any whitespace and % sign if present
+        humidityText = humidityText.Replace("%", "", StringComparison.OrdinalIgnoreCase).Trim();
+        
+        if (!int.TryParse(humidityText, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var humidity))
+        {
+            throw new InvalidOperationException(
+                $"Failed to parse humidity '{humidityText}' as integer in file '{filePath}'");
+        }
+
+        return humidity;
     }
 
     /// <summary>

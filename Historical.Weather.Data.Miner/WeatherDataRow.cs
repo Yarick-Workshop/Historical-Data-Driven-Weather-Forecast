@@ -6,9 +6,9 @@
 public class WeatherDataRow
 {
     /// <summary>
-    /// Gets the time (e.g., "00:00").
+    /// Gets the date and time.
     /// </summary>
-    public string Time { get; }
+    public DateTime Time { get; }
 
     /// <summary>
     /// Gets the weather characteristics (e.g., "Сплошная облачность").
@@ -16,9 +16,9 @@ public class WeatherDataRow
     public string WeatherCharacteristics { get; }
 
     /// <summary>
-    /// Gets the air temperature (e.g., "+5°C").
+    /// Gets the air temperature in degrees Celsius.
     /// </summary>
-    public string Temperature { get; }
+    public int Temperature { get; }
 
     /// <summary>
     /// Gets the wind direction (e.g., "Западный").
@@ -26,38 +26,38 @@ public class WeatherDataRow
     public string WindDirection { get; }
 
     /// <summary>
-    /// Gets the wind speed (e.g., "7.0").
+    /// Gets the wind speed in m/s.
     /// </summary>
-    public string WindSpeed { get; }
+    public decimal WindSpeed { get; }
 
     /// <summary>
-    /// Gets the atmospheric pressure (e.g., "740").
+    /// Gets the atmospheric pressure.
     /// </summary>
-    public string AtmosphericPressure { get; }
+    public int AtmosphericPressure { get; }
 
     /// <summary>
-    /// Gets the air humidity percentage (e.g., "93").
+    /// Gets the air humidity percentage.
     /// </summary>
-    public string Humidity { get; }
+    public int Humidity { get; }
 
     /// <summary>
     /// Initializes a new instance of the WeatherDataRow class.
     /// </summary>
-    /// <param name="time">The time value.</param>
+    /// <param name="time">The date and time value.</param>
     /// <param name="weatherCharacteristics">The weather characteristics.</param>
-    /// <param name="temperature">The air temperature.</param>
+    /// <param name="temperature">The air temperature in degrees Celsius.</param>
     /// <param name="windDirection">The wind direction.</param>
-    /// <param name="windSpeed">The wind speed.</param>
+    /// <param name="windSpeed">The wind speed in m/s.</param>
     /// <param name="atmosphericPressure">The atmospheric pressure.</param>
     /// <param name="humidity">The air humidity percentage.</param>
     public WeatherDataRow(
-        string time,
+        DateTime time,
         string weatherCharacteristics,
-        string temperature,
+        int temperature,
         string windDirection,
-        string windSpeed,
-        string atmosphericPressure,
-        string humidity)
+        decimal windSpeed,
+        int atmosphericPressure,
+        int humidity)
     {
         Time = time;
         WeatherCharacteristics = weatherCharacteristics;
