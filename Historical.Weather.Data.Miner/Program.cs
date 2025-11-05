@@ -119,10 +119,17 @@ try
         .OrderBy(x => x.RealWeatherDataRowsCount)
         .ToList();
 
-    // Write the anonymous type list to the table
+    // Write the anonymous type list to the table and create distribution diagram
     using (var htmlWriter = new HtmlLogWriter.HtmlLogWriter(logFilePath, "Historical Weather Data Miner"))
     {
         htmlWriter.WriteTable(groupedResults, "Row List Count Distribution");
+        
+        // Create distribution diagram from the row counts
+        var rowCounts = parseResults.Select(r => (double)r.WeatherDataRows.Count).ToList();
+        if (rowCounts.Count > 0)
+        {
+            htmlWriter.WriteDistributionDiagram(rowCounts, "Distribution of Row List Counts");
+        }
     }
 }
 catch (Exception ex)

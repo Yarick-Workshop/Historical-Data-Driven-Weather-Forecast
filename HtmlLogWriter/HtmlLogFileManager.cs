@@ -270,6 +270,29 @@ internal static class HtmlLogFileManager
         tr:hover {
             background-color: #e8f4f8;
         }
+        .image-container {
+            margin: 20px;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .image-container img {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ecf0f1;
+            border-radius: 4px;
+            display: block;
+            margin: 0 auto;
+        }
+        .image-caption {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #34495e;
+            font-style: italic;
+            text-align: center;
+        }
     </style>
 </head>
 <body>

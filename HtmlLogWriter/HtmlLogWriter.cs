@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text;
+using ScottPlot;
 
 namespace HtmlLogWriter;
 
@@ -125,6 +126,138 @@ public class HtmlLogWriter : IDisposable
             return;
 
         _fileHandler.WriteLine(@"        <div class=""separator""><hr></div>");
+    }
+
+    /// <summary>
+    /// Writes an image with a caption/subscription to the HTML file.
+    /// </summary>
+    /// <param name="imagePath">Path to the image file.</param>
+    /// <param name="caption">Caption/subscription text for the image.</param>
+    public void WriteImage(string imagePath, string? caption = null)
+    {
+        if (_isDisposed)
+            return;
+
+        if (string.IsNullOrEmpty(imagePath))
+            throw new ArgumentNullException(nameof(imagePath));
+
+        if (!File.Exists(imagePath))
+            throw new FileNotFoundException($"Image file not found: {imagePath}");
+
+        // Close the logs container before writing images
+        _fileHandler.CloseLogsContainer();
+
+        // Read image and convert to base64
+        var imageBytes = File.ReadAllBytes(imagePath);
+        var base64String = Convert.ToBase64String(imageBytes);
+        var imageExtension = Path.GetExtension(imagePath).ToLowerInvariant().TrimStart('.');
+        var mimeType = imageExtension switch
+        {
+            "png" => "image/png",
+            "jpg" or "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "svg" => "image/svg+xml",
+            "webp" => "image/webp",
+            _ => "image/png"
+        };
+        var imgSrc = $"data:{mimeType};base64,{base64String}";
+
+        _fileHandler.WriteLine($@"        <div class=""image-container"">
+            <img src=""{imgSrc}"" alt=""{EscapeHtml(caption ?? "Image")}"" />
+            {(string.IsNullOrEmpty(caption) ? "" : $@"<div class=""image-caption"">{EscapeHtml(caption)}</div>")}
+        </div>");
+    }
+
+    /// <summary>
+    /// Creates and writes a distribution diagram (histogram) using ScottPlot.
+    /// </summary>
+    /// <param name="data">The data values to plot in the distribution.</param>
+    /// <param name="caption">Caption/subscription text for the diagram.</param>
+    /// <param name="width">Width of the plot in pixels. Default is 800.</param>
+    /// <param name="height">Height of the plot in pixels. Default is 400.</param>
+    /// <param name="bins">Number of bins for the histogram. Default is 30.</param>
+    public void WriteDistributionDiagram(
+        IEnumerable<double> data,
+        string? caption = null,
+        int width = 800,
+        int height = 400,
+        int bins = 30)
+    {
+        if (_isDisposed)
+            return;
+
+        if (data == null)
+            throw new ArgumentNullException(nameof(data));
+
+        var dataArray = data.ToArray();
+        if (dataArray.Length == 0)
+            return;
+
+        // Close the logs container before writing diagrams
+        _fileHandler.CloseLogsContainer();
+
+        // Create the plot
+        var plt = new Plot();
+        
+        // Calculate histogram bins
+        var min = dataArray.Min();
+        var max = dataArray.Max();
+        var binWidth = (max - min) / bins;
+        
+        var binEdges = new double[bins + 1];
+        var binCounts = new double[bins];
+        
+        for (int i = 0; i <= bins; i++)
+        {
+            binEdges[i] = min + i * binWidth;
+        }
+        
+        foreach (var value in dataArray)
+        {
+            var binIndex = (int)Math.Min((value - min) / binWidth, bins - 1);
+            binCounts[binIndex]++;
+        }
+        
+        // Create positions for bars (centers of bins)
+        var positions = new double[bins];
+        var values = new double[bins];
+        for (int i = 0; i < bins; i++)
+        {
+            positions[i] = (binEdges[i] + binEdges[i + 1]) / 2;
+            values[i] = binCounts[i];
+        }
+        
+        // Add bars to create histogram
+        var bars = plt.Add.Bars(positions, values);
+        bars.Color = Colors.Blue;
+
+        // Style the plot
+        plt.Title(caption ?? "Distribution");
+        plt.YLabel("Frequency");
+        plt.XLabel("Value");
+
+        // Save plot to temporary file then read as bytes
+        var tempFile = Path.Combine(Path.GetTempPath(), $"plot_{Guid.NewGuid()}.png");
+        try
+        {
+            plt.SavePng(tempFile, width, height);
+            var imageBytes = File.ReadAllBytes(tempFile);
+            var base64String = Convert.ToBase64String(imageBytes);
+            var imgSrc = $"data:image/png;base64,{base64String}";
+
+            _fileHandler.WriteLine($@"        <div class=""image-container"">
+            <img src=""{imgSrc}"" alt=""{EscapeHtml(caption ?? "Distribution Diagram")}"" />
+            {(string.IsNullOrEmpty(caption) ? "" : $@"<div class=""image-caption"">{EscapeHtml(caption)}</div>")}
+        </div>");
+        }
+        finally
+        {
+            // Clean up temporary file
+            if (File.Exists(tempFile))
+            {
+                try { File.Delete(tempFile); } catch { }
+            }
+        }
     }
 
     private static bool IsIndexedProperty(PropertyInfo property)
