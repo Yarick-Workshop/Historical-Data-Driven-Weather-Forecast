@@ -113,10 +113,10 @@ try
         .GroupBy(r => r.WeatherDataRows.Count)
         .Select(g => new
         {
-            RowListCount = g.Key,
-            Count = g.Count()
+            RealWeatherDataRowsCount = g.Key,
+            ParsedFilesCount = g.Count()
         })
-        .OrderBy(x => x.RowListCount)
+        .OrderBy(x => x.RealWeatherDataRowsCount)
         .ToList();
 
     // Write the anonymous type list to the table

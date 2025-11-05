@@ -51,11 +51,9 @@ public class HtmlLogWriter : IDisposable
         // Get all readable properties and fields
         var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.CanRead && !IsIndexedProperty(p))
-            .OrderBy(p => p.Name)
             .ToList();
 
         var fields = type.GetFields(BindingFlags.Public | BindingFlags.Instance)
-            .OrderBy(f => f.Name)
             .ToList();
 
         if (properties.Count == 0 && fields.Count == 0)
@@ -78,12 +76,14 @@ public class HtmlLogWriter : IDisposable
         
         foreach (var prop in properties)
         {
-            _fileHandler.Write($"<th>{EscapeHtml(prop.Name)}</th>");
+            var displayName = SplitPascalCase(prop.Name);
+            _fileHandler.Write($"<th>{EscapeHtml(displayName)}</th>");
         }
         
         foreach (var field in fields)
         {
-            _fileHandler.Write($"<th>{EscapeHtml(field.Name)}</th>");
+            var displayName = SplitPascalCase(field.Name);
+            _fileHandler.Write($"<th>{EscapeHtml(displayName)}</th>");
         }
         
         _fileHandler.WriteLine("</tr>");
@@ -159,6 +159,19 @@ public class HtmlLogWriter : IDisposable
             return formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture);
 
         return value.ToString() ?? string.Empty;
+    }
+
+    private static string SplitPascalCase(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return string.Empty;
+
+        // Insert space before uppercase letters (except the first one)
+        // Uses regex to match: lowercase or digit followed by uppercase
+        return System.Text.RegularExpressions.Regex.Replace(
+            text,
+            @"(\p{Ll}|\d)(\p{Lu})",
+            "$1 $2");
     }
 
     private static string EscapeHtml(string text)

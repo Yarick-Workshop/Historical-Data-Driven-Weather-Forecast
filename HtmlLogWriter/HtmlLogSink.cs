@@ -57,7 +57,7 @@ public class HtmlLogSink : ILogEventSink, IDisposable
         _fileHandler.WriteLine($@"        <div class=""log-entry {levelClass}"">
             <div class=""timestamp"">{timestamp:yyyy-MM-dd HH:mm:ss.fff}</div>
             <div class=""level {levelClass}"">{levelDisplay}</div>
-            <div class=""message"">{EscapeHtml(message)}</div>
+            <div class=""message"">{EscapeHtmlWithLeadingEmptyLines(message)}</div>
         </div>");
     }
 
@@ -73,6 +73,37 @@ public class HtmlLogSink : ILogEventSink, IDisposable
         };
     }
 
+
+    private static string EscapeHtmlWithLeadingEmptyLines(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return string.Empty;
+
+        // Find leading spaces at the beginning of the text
+        var leadingSpaces = 0;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] == ' ')
+            {
+                leadingSpaces++;
+            }
+            else
+            {
+                // Stop at first non-space, non-newline character
+                break;
+            }
+        }
+
+        if (leadingSpaces > 0)
+        {
+            // Replace leading spaces with &nbsp;
+            var rest = text.Substring(leadingSpaces);
+            var nbsp = string.Concat(Enumerable.Repeat("&nbsp;", leadingSpaces));
+            return nbsp + EscapeHtml(rest);
+        }
+
+        return EscapeHtml(text);
+    }
 
     private static string EscapeHtml(string text)
     {
@@ -100,3 +131,4 @@ public class HtmlLogSink : ILogEventSink, IDisposable
         }
     }
 }
+
