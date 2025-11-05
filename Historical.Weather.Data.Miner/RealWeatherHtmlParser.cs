@@ -350,10 +350,19 @@ public class RealWeatherHtmlParser
     {
         var tempText = ExtractTextFromCell(cell, filePath, "temperature");
         
-        // Remove °C and whitespace, handle + or - sign
-        var cleanedText = tempText.Replace("°C", "", StringComparison.OrdinalIgnoreCase)
-                                  .Replace("°", "", StringComparison.OrdinalIgnoreCase)
-                                  .Trim();
+        // Decode HTML entities (e.g., &deg; -> °)
+        tempText = System.Net.WebUtility.HtmlDecode(tempText);
+        
+        // Use regex to extract the numeric value with optional sign
+        // Matches: +14, -5, 20, etc. (handles +, -, or no sign)
+        var tempMatch = System.Text.RegularExpressions.Regex.Match(tempText, @"([+-]?\d+)");
+        if (!tempMatch.Success)
+        {
+            throw new InvalidOperationException(
+                $"Failed to extract numeric temperature from '{tempText}' in file '{filePath}'");
+        }
+        
+        var cleanedText = tempMatch.Groups[1].Value.Trim();
         
         if (!int.TryParse(cleanedText, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var temperature))
         {

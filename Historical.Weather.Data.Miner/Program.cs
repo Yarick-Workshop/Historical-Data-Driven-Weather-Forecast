@@ -120,7 +120,7 @@ try
         .ToList();
 
     // Write the anonymous type list to the table
-    using (var htmlWriter = new HtmlLogWriter(logFilePath, "Historical Weather Data Miner"))
+    using (var htmlWriter = new HtmlLogWriter.HtmlLogWriter(logFilePath, "Historical Weather Data Miner"))
     {
         htmlWriter.WriteTable(groupedResults, "Row List Count Distribution");
     }
