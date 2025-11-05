@@ -63,6 +63,9 @@ try
     // Initialize HTML parser
     var htmlParser = new RealWeatherHtmlParser();
 
+    // Collect all parse results
+    var parseResults = new List<HtmlParseResult>();
+
     // Parse each HTML file
     foreach (var file in files)
     {
@@ -73,7 +76,8 @@ try
         try
         {
             // Parse the HTML file (all parsing logic is inside ParseFile)
-            htmlParser.ParseFile(file);
+            var result = htmlParser.ParseFile(file);
+            parseResults.Add(result);
             
             successfulCount++;
             Log.Debug("Successfully parsed HTML file: {FilePath}", file);
@@ -103,6 +107,23 @@ try
     Log.Information("  Unsuccessful: {UnsuccessfulCount}", unsuccessfulCount);
     Log.Information("  Total processing time: {TotalTime:F2} seconds", totalTime);
     Log.Information("  Average time per file: {AverageTime:F3} seconds", averageTime);
+
+    // Group by RowListCount and calculate count for each group
+    var groupedResults = parseResults
+        .GroupBy(r => r.WeatherDataRows.Count)
+        .Select(g => new
+        {
+            RowListCount = g.Key,
+            Count = g.Count()
+        })
+        .OrderBy(x => x.RowListCount)
+        .ToList();
+
+    // Write the anonymous type list to the table
+    using (var htmlWriter = new HtmlLogWriter(logFilePath, "Historical Weather Data Miner"))
+    {
+        htmlWriter.WriteTable(groupedResults, "Row List Count Distribution");
+    }
 }
 catch (Exception ex)
 {
@@ -112,4 +133,3 @@ finally
 {
     Log.CloseAndFlush();
 }
-
