@@ -18,7 +18,7 @@ Log.Logger = new LoggerConfiguration()
         .Filter.ByIncludingOnly(evt => 
             evt.Level == LogEventLevel.Information || 
             evt.Level == LogEventLevel.Error || 
-            evt.Level == LogEventLevel.Fatal)
+            evt.Level == LogEventLevel.Fatal)//TODO, refactor to make configurable
     .MinimumLevel.Debug()
     .CreateLogger();
 
@@ -27,8 +27,12 @@ try
     Log.Debug("Start");
 
     // Build configuration
+    var projectDir = Path.Combine(Directory.GetCurrentDirectory(), "Historical.Weather.Data.Miner");
+    var basePath = Directory.Exists(projectDir) && File.Exists(Path.Combine(projectDir, "appsettings.json")) 
+        ? projectDir 
+        : Directory.GetCurrentDirectory();
     var builder = new ConfigurationBuilder()
-        .SetBasePath(Directory.GetCurrentDirectory())
+        .SetBasePath(basePath)
         .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
 
     var configuration = builder.Build();
@@ -63,8 +67,8 @@ try
     // Initialize HTML parser
     var htmlParser = new RealWeatherHtmlParser();
 
-    // Collect all parse results
-    var parseResults = new List<HtmlParseResult>();
+    // Collect all parse results with their file paths
+    var parseResultsWithPaths = new List<(string FilePath, HtmlParseResult Result)>();
 
     // Parse each HTML file
     foreach (var file in files)
@@ -77,7 +81,7 @@ try
         {
             // Parse the HTML file (all parsing logic is inside ParseFile)
             var result = htmlParser.ParseFile(file);
-            parseResults.Add(result);
+            parseResultsWithPaths.Add((file, result));
             
             successfulCount++;
             Log.Debug("Successfully parsed HTML file: {FilePath}", file);
@@ -108,28 +112,19 @@ try
     Log.Information("  Total processing time: {TotalTime:F2} seconds", totalTime);
     Log.Information("  Average time per file: {AverageTime:F3} seconds", averageTime);
 
-    // Group by RowListCount and calculate count for each group
-    var groupedResults = parseResults
-        .GroupBy(r => r.WeatherDataRows.Count)
-        .Select(g => new
-        {
-            RealWeatherDataRowsCount = g.Key,
-            ParsedFilesCount = g.Count()
-        })
-        .OrderBy(x => x.RealWeatherDataRowsCount)
-        .ToList();
-
-    // Write the anonymous type list to the table and create distribution diagram
+    // Write tables to HTML
     using (var htmlWriter = new HtmlLogWriter.HtmlLogWriter(logFilePath, "Historical Weather Data Miner"))
     {
-        htmlWriter.WriteTable(groupedResults, "Row List Count Distribution");
+        WriteRowCountDistributionTable(htmlWriter, parseResultsWithPaths);
         
         // Create distribution diagram from the row counts
-        var rowCounts = parseResults.Select(r => (double)r.WeatherDataRows.Count).ToList();
+        var rowCounts = parseResultsWithPaths.Select(r => (double)r.Result.WeatherDataRows.Count).ToList();
         if (rowCounts.Count > 0)
         {
             htmlWriter.WriteDistributionDiagram(rowCounts, "Distribution of Row List Counts");
         }
+        
+        WriteTimesDistributionTable(htmlWriter, parseResultsWithPaths);
     }
 }
 catch (Exception ex)
@@ -139,4 +134,76 @@ catch (Exception ex)
 finally
 {
     Log.CloseAndFlush();
+}
+
+/// <summary>
+/// Generates and writes the row count distribution table to HTML.
+/// </summary>
+/// <param name="writer">The HTML writer instance.</param>
+/// <param name="parseResultsWithPaths">List of parse results with their file paths.</param>
+static void WriteRowCountDistributionTable(HtmlLogWriter.HtmlLogWriter writer, List<(string FilePath, HtmlParseResult Result)> parseResultsWithPaths)
+{
+    var tableData = parseResultsWithPaths
+        .GroupBy(r => r.Result.WeatherDataRows.Count)
+        .Select(g => new
+        {
+            RealWeatherDataRowsCount = g.Key,
+            ParsedFilesCount = g.Count()
+        })
+        .OrderBy(x => x.RealWeatherDataRowsCount)
+        .ToList();
+    
+    writer.WriteTable(tableData, "Row List Count Distribution");
+}
+
+/// <summary>
+/// Generates and writes the times distribution table to HTML.
+/// </summary>
+/// <param name="writer">The HTML writer instance.</param>
+/// <param name="parseResultsWithPaths">List of parse results with their file paths.</param>
+static void WriteTimesDistributionTable(HtmlLogWriter.HtmlLogWriter writer, List<(string FilePath, HtmlParseResult Result)> parseResultsWithPaths)
+{
+    var tableData = parseResultsWithPaths
+        .Select(r =>
+        {
+            var fileTimes = r.Result.WeatherDataRows
+                .Select(row => row.Time.TimeOfDay)
+                .OrderBy(t => t)
+                .ToList();
+            var timesKey = string.Join(",", fileTimes.Select(t => t.ToString(@"hh\:mm")));
+            return new { TimesKey = timesKey, Result = r };
+        })
+        .GroupBy(x => x.TimesKey)
+        .Select(g =>
+        {
+            var results = g.Select(x => x.Result).ToList();
+            var dates = results
+                .Where(r => !string.IsNullOrEmpty(r.Result.Date))
+                .Select(r => DateTime.ParseExact(r.Result.Date!, "yyyy-MM-dd", null))
+                .ToList();
+            
+            // Get the times list (all should be the same since we grouped by the key)
+            var timesList = results.First().Result.WeatherDataRows
+                .Select(row => row.Time.TimeOfDay)
+                .OrderBy(t => t)
+                .ToList();
+            
+            // Get example URIs (1 if only 1 file, 2 if more)
+            var exampleUris = results
+                .Take(results.Count == 1 ? 1 : 2)
+                .Select(r => r.FilePath)
+                .ToList();
+            
+            return new
+            {
+                Times = string.Join(", ", timesList.Select(t => t.ToString(@"hh\:mm"))),
+                MinimumDate = dates.Any() ? dates.Min().ToString("yyyy-MM-dd") : (string?)null,
+                MaximumDate = dates.Any() ? dates.Max().ToString("yyyy-MM-dd") : (string?)null,
+                ExampleUris = string.Join("; ", exampleUris)
+            };
+        })
+        .OrderBy(x => x.Times)
+        .ToList();
+    
+    writer.WriteTable(tableData, "Times Distribution");
 }
