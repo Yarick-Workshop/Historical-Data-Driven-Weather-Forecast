@@ -13,13 +13,11 @@ var logFilePath = Path.Combine(logDirectory, $"result{logDateTime}.html");
 
 // Initialize Serilog for console and HTML logging
 Log.Logger = new LoggerConfiguration()
-    .WriteTo.Console()
-    .WriteTo.HtmlLog(logFilePath, "Historical Weather Data Miner")
-        .Filter.ByIncludingOnly(evt => 
-            evt.Level == LogEventLevel.Information || 
-            evt.Level == LogEventLevel.Error || 
-            evt.Level == LogEventLevel.Fatal)//TODO, refactor to make configurable
     .MinimumLevel.Debug()
+    .WriteTo.Console(restrictedToMinimumLevel: LogEventLevel.Debug) // Console: all levels (Debug and above)
+    .WriteTo.Logger(lc => lc
+        .Filter.ByIncludingOnly(evt => evt.Level >= LogEventLevel.Information) // HTML: Information and above (Information, Warning, Error, Fatal)
+        .WriteTo.HtmlLog(logFilePath, "Historical Weather Data Miner"))
     .CreateLogger();
 
 try
