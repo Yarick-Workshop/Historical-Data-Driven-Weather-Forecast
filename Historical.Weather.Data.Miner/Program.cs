@@ -200,6 +200,17 @@ static void WriteTimesDistributionTable(HtmlLogWriter.HtmlLogWriter writer, List
                 .Select(r => r.FilePath)
                 .ToList();
             
+            // Convert file paths to HTML links
+            var exampleLinks = exampleUris.Select(filePath =>
+            {
+                var fileName = Path.GetFileName(filePath);
+                // Convert absolute file path to file:// URI
+                var fileUri = Path.IsPathRooted(filePath) 
+                    ? new Uri(filePath).AbsoluteUri 
+                    : new Uri(Path.GetFullPath(filePath)).AbsoluteUri;
+                return $"<a href=\"{fileUri}\" target=\"_blank\">{fileName}</a>";
+            }).ToList();
+            
             return new
             {
                 Times = string.Join(", ", timesList.Select(t => t.ToString(@"hh\:mm"))),
@@ -207,7 +218,7 @@ static void WriteTimesDistributionTable(HtmlLogWriter.HtmlLogWriter writer, List
                 ParsedFilesCount = parsedFilesCount,
                 MinimumDate = dates.Any() ? dates.Min().ToString("yyyy-MM-dd") : (string?)null,
                 MaximumDate = dates.Any() ? dates.Max().ToString("yyyy-MM-dd") : (string?)null,
-                ExampleUris = string.Join(", ", exampleUris)
+                ExampleUris = string.Join(", ", exampleLinks)
             };
         })
         .OrderBy(x => x.MinimumDate)

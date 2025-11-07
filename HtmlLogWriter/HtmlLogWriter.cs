@@ -100,13 +100,17 @@ public class HtmlLogWriter : IDisposable
             foreach (var prop in properties)
             {
                 var value = GetPropertyValue(item, prop);
-                _fileHandler.Write($"<td>{EscapeHtml(FormatValue(value))}</td>");
+                var formattedValue = FormatValue(value);
+                var cellContent = ContainsHtml(formattedValue) ? formattedValue : EscapeHtml(formattedValue);
+                _fileHandler.Write($"<td>{cellContent}</td>");
             }
             
             foreach (var field in fields)
             {
                 var value = field.GetValue(item);
-                _fileHandler.Write($"<td>{EscapeHtml(FormatValue(value))}</td>");
+                var formattedValue = FormatValue(value);
+                var cellContent = ContainsHtml(formattedValue) ? formattedValue : EscapeHtml(formattedValue);
+                _fileHandler.Write($"<td>{cellContent}</td>");
             }
             
             _fileHandler.WriteLine("</tr>");
@@ -305,6 +309,16 @@ public class HtmlLogWriter : IDisposable
             text,
             @"(\p{Ll}|\d)(\p{Lu})",
             "$1 $2");
+    }
+
+    private static bool ContainsHtml(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return false;
+
+        // Check if the string contains HTML tags (e.g., <a>, <div>, etc.)
+        // Look for patterns like <tag> or <tag/> or </tag>
+        return System.Text.RegularExpressions.Regex.IsMatch(text, @"<[^>]+>");
     }
 
     private static string EscapeHtml(string text)
