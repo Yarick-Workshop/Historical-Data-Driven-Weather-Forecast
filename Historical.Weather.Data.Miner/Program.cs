@@ -58,15 +58,22 @@ try
 
     // Initialize counters and timing
     var totalStopwatch = Stopwatch.StartNew();
-    int successfulCount = 0;
-    int unsuccessfulCount = 0;
+    int parsingSuccessfulCount = 0;
+    int parsingUnsuccessfulCount = 0;
     long totalFileProcessingTime = 0;
 
     // Initialize HTML parser
     var htmlParser = new RealWeatherHtmlParser();
 
     // Collect all parse results with their file paths
-    var parseResultsWithPaths = new List<(string FilePath, HtmlParseResult Result)>();
+    var rawParseResultsWithPaths = new List<(string FilePath, HtmlParseResult Result)>();
+
+    // Prepare expected observation times (00:00 to 21:00 with 3-hour step)
+    var expectedObservationTimes = Enumerable.Range(0, 8)
+        .Select(i => TimeSpan.FromHours(i * 3))
+        .ToList();
+
+    int missingTimeEntriesCount = 0;
 
     // Parse each HTML file
     foreach (var file in files)
@@ -79,20 +86,41 @@ try
         {
             // Parse the HTML file (all parsing logic is inside ParseFile)
             var result = htmlParser.ParseFile(file);
-            parseResultsWithPaths.Add((file, result));
+
+            rawParseResultsWithPaths.Add((file, result));
             
-            successfulCount++;
+            parsingSuccessfulCount++;
             Log.Debug("Successfully parsed HTML file: {FilePath}", file);
         }
         catch (Exception ex)
         {
-            unsuccessfulCount++;
+            parsingUnsuccessfulCount++;
             Log.Error(ex, "Failed to parse HTML file: {FilePath}", file);
         }
         finally
         {
             fileStopwatch.Stop();
             totalFileProcessingTime += fileStopwatch.ElapsedMilliseconds;
+        }
+    }
+
+    // Perform observation time normalization after parsing all files
+    var normalizedParseResultsWithPaths = new List<(string FilePath, HtmlParseResult Result)>();
+    int normalizationSuccessfulCount = 0;
+    int normalizationUnsuccessfulCount = 0;
+
+    foreach (var (filePath, parseResult) in rawParseResultsWithPaths)
+    {
+        try
+        {
+            var normalizedResult = NormalizeObservationTimesOrThrow(filePath, parseResult, expectedObservationTimes, ref missingTimeEntriesCount);
+            normalizedParseResultsWithPaths.Add((filePath, normalizedResult));
+            normalizationSuccessfulCount++;
+        }
+        catch (Exception normalizationException)
+        {
+            normalizationUnsuccessfulCount++;
+            Log.Error(normalizationException, "Failed to normalize HTML file: {FilePath}", filePath);
         }
     }
 
@@ -105,24 +133,27 @@ try
     Log.Debug("Finish");
     Log.Information("Processing Statistics:");
     Log.Information("  Total files processed: {TotalFiles}", files.Length);
-    Log.Information("  Successful: {SuccessfulCount}", successfulCount);
-    Log.Information("  Unsuccessful: {UnsuccessfulCount}", unsuccessfulCount);
+    Log.Information("  Parsing successful: {ParsingSuccessfulCount}", parsingSuccessfulCount);
+    Log.Information("  Parsing unsuccessful: {ParsingUnsuccessfulCount}", parsingUnsuccessfulCount);
+    Log.Information("  Normalization successful: {NormalizationSuccessfulCount}", normalizationSuccessfulCount);
+    Log.Information("  Normalization unsuccessful: {NormalizationUnsuccessfulCount}", normalizationUnsuccessfulCount);
     Log.Information("  Total processing time: {TotalTime:F2} seconds", totalTime);
     Log.Information("  Average time per file: {AverageTime:F3} seconds", averageTime);
+    Log.Information("  Files missing expected observation times: {MissingTimeEntriesCount}", missingTimeEntriesCount);
 
     // Write tables to HTML
     using (var htmlWriter = new HtmlLogWriter.HtmlLogWriter(logFilePath, "Historical Weather Data Miner"))
     {
-        WriteRowCountDistributionTable(htmlWriter, parseResultsWithPaths);
+        WriteRowCountDistributionTable(htmlWriter, normalizedParseResultsWithPaths);
         
         // Create distribution diagram from the row counts
-        var rowCounts = parseResultsWithPaths.Select(r => (double)r.Result.WeatherDataRows.Count).ToList();
+        var rowCounts = normalizedParseResultsWithPaths.Select(r => (double)r.Result.WeatherDataRows.Count).ToList();
         if (rowCounts.Count > 0)
         {
             htmlWriter.WriteDistributionDiagram(rowCounts, "Distribution of Row List Counts");
         }
         
-        WriteTimesDistributionTable(htmlWriter, parseResultsWithPaths);
+        WriteTimesDistributionTable(htmlWriter, normalizedParseResultsWithPaths);
     }
 }
 catch (Exception ex)
@@ -223,4 +254,65 @@ static void WriteTimesDistributionTable(HtmlLogWriter.HtmlLogWriter writer, List
         .ToList();
     
     writer.WriteTable(tableData, "Times Distribution");
+}
+
+static HtmlParseResult NormalizeObservationTimesOrThrow(
+    string filePath,
+    HtmlParseResult parseResult,
+    IReadOnlyCollection<TimeSpan> expectedObservationTimes,
+    ref int missingTimeEntriesCount)
+{
+    var rowsByTime = parseResult.WeatherDataRows
+        .GroupBy(row => row.Time.TimeOfDay)
+        .ToDictionary(g => g.Key, g => g.OrderBy(r => r.Time).ToList());
+
+    var normalizedRows = new List<WeatherDataRow>(expectedObservationTimes.Count);
+    var missingTimes = new List<TimeSpan>();
+
+    foreach (var expectedTime in expectedObservationTimes)
+    {
+        if (!rowsByTime.TryGetValue(expectedTime, out var rowsForTime) || rowsForTime.Count == 0)
+        {
+            missingTimes.Add(expectedTime);
+            continue;
+        }
+
+        if (rowsForTime.Count > 1)
+        {
+            var duplicatesFormatted = string.Join(", ", rowsForTime.Select(r => r.Time.ToString("yyyy-MM-dd HH:mm")));
+            Log.Warning("Multiple observations found for {ObservationTime} in file {FilePath}. Using the first occurrence. Entries: {Entries}",
+                expectedTime.ToString(@"hh\:mm"), filePath, duplicatesFormatted);
+        }
+
+        normalizedRows.Add(rowsForTime[0]);
+    }
+
+    if (missingTimes.Count > 0)
+    {
+        missingTimeEntriesCount++;
+        var missingTimesFormatted = string.Join(", ", missingTimes.Select(ts => ts.ToString(@"hh\:mm")));
+        throw new InvalidOperationException($"Missing expected observation times ({missingTimesFormatted}) in file '{filePath}'.");
+    }
+
+    var extraObservationTimes = rowsByTime.Keys
+        .Where(time => !expectedObservationTimes.Contains(time))
+        .OrderBy(time => time)
+        .Select(time => time.ToString(@"hh\:mm"))
+        .ToList();
+
+    if (extraObservationTimes.Count > 0)
+    {
+        Log.Debug("Ignoring extra observation times {ExtraObservationTimes} in file {FilePath}",
+            string.Join(", ", extraObservationTimes), filePath);
+    }
+
+    normalizedRows.Sort((left, right) => left.Time.CompareTo(right.Time));
+
+    if (normalizedRows.Count != expectedObservationTimes.Count)
+    {
+        throw new InvalidOperationException(
+            $"Unexpected row count after normalization. Expected {expectedObservationTimes.Count}, got {normalizedRows.Count} in file '{filePath}'.");
+    }
+
+    return new HtmlParseResult(parseResult.CityName, parseResult.Date, new List<WeatherDataRow>(normalizedRows));
 }
