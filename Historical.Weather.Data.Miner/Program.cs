@@ -188,6 +188,12 @@ static void WriteTimesDistributionTable(HtmlLogWriter.HtmlLogWriter writer, List
                 .OrderBy(t => t)
                 .ToList();
             
+            // Get rows count (all files in the group should have the same number of rows)
+            var rowsCount = results.First().Result.WeatherDataRows.Count;
+            
+            // Get parsed files count
+            var parsedFilesCount = results.Count;
+            
             // Get example URIs (1 if only 1 file, 2 if more)
             var exampleUris = results
                 .Take(results.Count == 1 ? 1 : 2)
@@ -197,12 +203,14 @@ static void WriteTimesDistributionTable(HtmlLogWriter.HtmlLogWriter writer, List
             return new
             {
                 Times = string.Join(", ", timesList.Select(t => t.ToString(@"hh\:mm"))),
+                RowsCount = rowsCount,
+                ParsedFilesCount = parsedFilesCount,
                 MinimumDate = dates.Any() ? dates.Min().ToString("yyyy-MM-dd") : (string?)null,
                 MaximumDate = dates.Any() ? dates.Max().ToString("yyyy-MM-dd") : (string?)null,
-                ExampleUris = string.Join("; ", exampleUris)
+                ExampleUris = string.Join(", ", exampleUris)
             };
         })
-        .OrderBy(x => x.Times)
+        .OrderBy(x => x.MinimumDate)
         .ToList();
     
     writer.WriteTable(tableData, "Times Distribution");
