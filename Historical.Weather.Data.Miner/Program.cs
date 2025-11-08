@@ -90,6 +90,8 @@ try
     Log.Information("  Total parsing time: {TotalTime:F2} seconds", totalTime);
     Log.Information("  Average time per file: {AverageTime:F3} seconds", averageTime);
 
+    LogAllKnownWeatherCharacteristics();
+
     var normalizedParseResultsWithPaths = NormalizeParseResults(
         rawParseResultsWithPaths,
         expectedObservationTimes,
@@ -361,6 +363,20 @@ static List<(string FilePath, HtmlParseResult Result)> NormalizeParseResults(
     }
 
     return normalizedParseResultsWithPaths;
+}
+
+static void LogAllKnownWeatherCharacteristics()
+{
+    var knownCharacteristics = WeatherCharacteristicConverter.GetAllKnownCharacteristics();
+
+    if (knownCharacteristics.Count == 0)
+    {
+        Log.Warning("No known weather characteristics are registered in the converter.");
+        return;
+    }
+
+    Log.Information("Known weather characteristics (ordered): {WeatherCharacteristics}", string.Join(", ", knownCharacteristics));
+    Log.Information("Total known weather characteristics: {WeatherCharacteristicsCount}", knownCharacteristics.Count);
 }
 
 static bool TryInterpolateMissingObservationTimes(

@@ -53,9 +53,6 @@ public static class WeatherCharacteristicConverter
         { "ясно", WeatherCharacteristics.Clear }
     };
 
-    private static readonly Dictionary<WeatherCharacteristics, string> FlagToStringMap =
-        StringToFlagMap.ToDictionary(kvp => kvp.Value, kvp => kvp.Key);
-
     public static WeatherCharacteristics FromStrings(IEnumerable<string> values, string? context = null)
     {
         if (values == null)
@@ -81,26 +78,13 @@ public static class WeatherCharacteristicConverter
         }
 
         return aggregate;
-    }
+    }    
 
-    public static IReadOnlyList<string> ToStrings(WeatherCharacteristics characteristics)
+    public static IReadOnlyList<string> GetAllKnownCharacteristics()
     {
-        if (characteristics == WeatherCharacteristics.None)
-        {
-            return Array.Empty<string>();
-        }
-
-        var results = new List<string>();
-
-        foreach (var (flag, description) in FlagToStringMap)
-        {
-            if (flag != WeatherCharacteristics.None && characteristics.HasFlag(flag))
-            {
-                results.Add(description);
-            }
-        }
-
-        return results;
+        return StringToFlagMap.Keys
+            .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 }
 
