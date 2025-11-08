@@ -95,7 +95,7 @@ try
 
     LogAllKnownWeatherCharacteristics();
 
-    _ = NormalizeParseResults(
+    var normalizedParseResultsByPlace = NormalizeParseResults(
         rawParseResultsByPlace,
         expectedObservationTimes,
         out var missingTimeEntriesCount,
@@ -108,6 +108,10 @@ try
     Log.Information("  Files missing expected observation times: {MissingTimeEntriesCount}", missingTimeEntriesCount);
 
     Log.Information("Finish");
+
+    WeatherDataCsvWriter.WriteNormalizedResultsByPlace(
+        normalizedParseResultsByPlace,
+        logDirectory);
 
     // Write tables to HTML
     using (var htmlWriter = new HtmlLogWriter.HtmlLogWriter(logFilePath, "Historical Weather Data Miner"))
@@ -148,7 +152,7 @@ static void WriteRowCountDistributionTable(HtmlLogWriter.HtmlLogWriter writer, I
         })
         .OrderBy(x => x.RealWeatherDataRowsCount)
         .ToList();
-
+    
     writer.WriteTable(tableData, "Row List Count Distribution");
 }
 
@@ -183,16 +187,16 @@ static void WriteTimesDistributionTable(HtmlLogWriter.HtmlLogWriter writer, IEnu
                 .Take(parsedFilesCount == 1 ? 1 : 2)
                 .Select(info => info.FilePath)
                 .ToList();
-
+            
             var exampleLinks = exampleUris.Select(filePath =>
             {
                 var fileName = Path.GetFileName(filePath);
-                var fileUri = Path.IsPathRooted(filePath)
-                    ? new Uri(filePath).AbsoluteUri
+                var fileUri = Path.IsPathRooted(filePath) 
+                    ? new Uri(filePath).AbsoluteUri 
                     : new Uri(Path.GetFullPath(filePath)).AbsoluteUri;
                 return $"<a href=\"{fileUri}\" target=\"_blank\">{fileName}</a>";
             }).ToList();
-
+            
             return new
             {
                 Times = string.Join(", ", timesList.Select(t => t.ToString(@"hh\:mm"))),
@@ -205,7 +209,7 @@ static void WriteTimesDistributionTable(HtmlLogWriter.HtmlLogWriter writer, IEnu
         })
         .OrderBy(x => x.MinimumDate)
         .ToList();
-
+    
     writer.WriteTable(tableData, "Times Distribution");
 }
 
@@ -386,7 +390,7 @@ static Dictionary<string, SortedDictionary<DateTime, (string FilePath, HtmlParse
             {
                 var previousDate = orderedDates[index - 1];
                 if (normalizedDateEntries.TryGetValue(previousDate, out var normalizedPreviousEntry))
-                {
+    {
                     previousDayResult = normalizedPreviousEntry.Result;
                 }
                 else
@@ -430,6 +434,7 @@ static Dictionary<string, SortedDictionary<DateTime, (string FilePath, HtmlParse
 
     return normalizedParseResultsByPlace;
 }
+
 
 static void LogAllKnownWeatherCharacteristics()
 {
@@ -550,7 +555,7 @@ static bool TryCreateInterpolatedRow(
     if (previousRow == null || nextRow == null)
     {
         return false;
-    }
+}
 
     var totalMinutes = (nextRow.Time - previousRow.Time).TotalMinutes;
     if (totalMinutes <= 0)
