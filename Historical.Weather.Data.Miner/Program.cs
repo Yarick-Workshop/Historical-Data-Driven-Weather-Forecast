@@ -6,6 +6,7 @@ using Serilog.Events;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Globalization;
 
 // Generate DateTime-based log file path
 var logDateTime = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
@@ -334,18 +335,167 @@ static List<(string FilePath, HtmlParseResult Result)> NormalizeParseResults(
 
     foreach (var (filePath, parseResult) in rawParseResultsWithPaths)
     {
+        HtmlParseResult? normalizedResult = null;
+
         try
         {
-            var normalizedResult = NormalizeObservationTimesOrThrow(filePath, parseResult, expectedObservationTimes, ref missingTimeEntriesCount);
-            normalizedParseResultsWithPaths.Add((filePath, normalizedResult));
-            normalizationSuccessfulCount++;
+            normalizedResult = NormalizeObservationTimesOrThrow(filePath, parseResult, expectedObservationTimes, ref missingTimeEntriesCount);
         }
         catch (Exception normalizationException)
         {
-            normalizationUnsuccessfulCount++;
-            Log.Error(normalizationException, "Failed to normalize HTML file: {FilePath}", filePath);
+            if (TryInterpolateMissingObservationTimes(filePath, parseResult, expectedObservationTimes, out var interpolatedResult))
+            {
+                normalizedResult = interpolatedResult;
+                Log.Information("Normalized file {FilePath} using interpolation for missing observations.", filePath);
+            }
+            else
+            {
+                normalizationUnsuccessfulCount++;
+                Log.Error(normalizationException, "Unable to normalize HTML file {FilePath} even after interpolation attempt.", filePath);
+                continue;
+            }
         }
+
+        normalizedParseResultsWithPaths.Add((filePath, normalizedResult));
+        normalizationSuccessfulCount++;
     }
 
     return normalizedParseResultsWithPaths;
+}
+
+static bool TryInterpolateMissingObservationTimes(
+    string filePath,
+    HtmlParseResult parseResult,
+    IReadOnlyCollection<TimeSpan> expectedObservationTimes,
+    out HtmlParseResult interpolatedResult)
+{
+    interpolatedResult = default!;
+
+    if (parseResult.WeatherDataRows == null || parseResult.WeatherDataRows.Count == 0)
+    {
+        return false;
+    }
+
+    var rowsGroupedByTime = parseResult.WeatherDataRows
+        .GroupBy(row => row.Time.TimeOfDay)
+        .ToDictionary(g => g.Key, g => g.OrderBy(r => r.Time).First());
+
+    if (rowsGroupedByTime.Count == 0)
+    {
+        return false;
+    }
+
+    var sortedExistingTimes = rowsGroupedByTime.Keys.OrderBy(time => time).ToList();
+    var baseDate = DetermineBaseDate(parseResult, rowsGroupedByTime[sortedExistingTimes[0]]);
+    var sortedExpectedTimes = expectedObservationTimes.OrderBy(time => time).ToList();
+
+    var normalizedRows = new List<WeatherDataRow>(sortedExpectedTimes.Count);
+
+    foreach (var expectedTime in sortedExpectedTimes)
+    {
+        if (rowsGroupedByTime.TryGetValue(expectedTime, out var existingRow))
+        {
+            normalizedRows.Add(existingRow);
+            continue;
+        }
+
+        if (!TryCreateInterpolatedRow(expectedTime, baseDate, rowsGroupedByTime, sortedExistingTimes, out var interpolatedRow))
+        {
+            Log.Debug("Interpolation not possible for observation time {ObservationTime} in file {FilePath}", expectedTime.ToString(@"hh\:mm"), filePath);
+            return false;
+        }
+
+        normalizedRows.Add(interpolatedRow);
+    }
+
+    normalizedRows.Sort((left, right) => left.Time.CompareTo(right.Time));
+    interpolatedResult = new HtmlParseResult(parseResult.CityName, parseResult.Date, normalizedRows);
+    return true;
+}
+
+static DateTime DetermineBaseDate(HtmlParseResult parseResult, WeatherDataRow referenceRow)
+{
+    if (!string.IsNullOrWhiteSpace(parseResult.Date) &&
+        DateTime.TryParseExact(parseResult.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
+    {
+        return parsedDate;
+    }
+
+    return referenceRow.Time.Date;
+}
+
+static bool TryCreateInterpolatedRow(
+    TimeSpan targetTime,
+    DateTime baseDate,
+    IReadOnlyDictionary<TimeSpan, WeatherDataRow> rowsByTime,
+    IReadOnlyList<TimeSpan> sortedExistingTimes,
+    out WeatherDataRow interpolatedRow)
+{
+    // TODO, to table and fix afterwards!!! instead this way more data will be fixed
+    interpolatedRow = default!;
+
+    var previousCandidates = sortedExistingTimes.Where(time => time < targetTime).ToList();
+    var nextCandidates = sortedExistingTimes.Where(time => time > targetTime).ToList();
+
+    if (previousCandidates.Count == 0 || nextCandidates.Count == 0)
+    {
+        return false;
+    }
+
+    var previousTime = previousCandidates[^1];
+    var nextTime = nextCandidates[0];
+
+    var previousRow = rowsByTime[previousTime];
+    var nextRow = rowsByTime[nextTime];
+
+    var previousDateTime = previousRow.Time;
+    var nextDateTime = nextRow.Time;
+
+    if (nextDateTime <= previousDateTime)
+    {
+        return false;
+    }
+
+    var targetDateTime = baseDate.Add(targetTime);
+    var elapsedMinutes = (targetDateTime - previousDateTime).TotalMinutes;
+    var totalMinutes = (nextDateTime - previousDateTime).TotalMinutes;
+
+    if (elapsedMinutes < 0 || elapsedMinutes > totalMinutes)
+    {
+        return false;
+    }
+
+    var ratio = elapsedMinutes / totalMinutes;
+
+    var temperature = InterpolateInt(previousRow.Temperature, nextRow.Temperature, ratio);
+    var windSpeed = InterpolateDecimal(previousRow.WindSpeed, nextRow.WindSpeed, ratio);
+    var atmosphericPressure = InterpolateInt(previousRow.AtmosphericPressure, nextRow.AtmosphericPressure, ratio);
+    var humidity = InterpolateInt(previousRow.Humidity, nextRow.Humidity, ratio);
+
+    var windDirection = ratio <= 0.5 ? previousRow.WindDirection : nextRow.WindDirection;
+    var characteristics = previousRow.WeatherCharacteristics | nextRow.WeatherCharacteristics;
+
+    interpolatedRow = new WeatherDataRow(
+        targetDateTime,
+        characteristics,
+        temperature,
+        windDirection,
+        windSpeed,
+        atmosphericPressure,
+        humidity);
+
+    return true;
+}
+
+static int InterpolateInt(int previousValue, int nextValue, double ratio)
+{
+    var interpolatedValue = previousValue + (nextValue - previousValue) * ratio;
+    return (int)Math.Round(interpolatedValue, MidpointRounding.AwayFromZero);
+}
+
+static decimal InterpolateDecimal(decimal previousValue, decimal nextValue, double ratio)
+{
+    var ratioDecimal = (decimal)ratio;
+    var interpolatedValue = previousValue + (nextValue - previousValue) * ratioDecimal;
+    return decimal.Round(interpolatedValue, 2, MidpointRounding.AwayFromZero);
 }
