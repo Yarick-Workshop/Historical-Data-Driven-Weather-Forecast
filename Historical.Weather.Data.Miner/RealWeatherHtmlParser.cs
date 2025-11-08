@@ -1,4 +1,5 @@
 using HtmlAgilityPack;
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Serilog;
 using System.Globalization;
@@ -230,7 +231,7 @@ public class RealWeatherHtmlParser
     /// <param name="filePath">The file path for error reporting.</param>
     /// <returns>The extracted weather characteristics, never null.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the cell is null or weather characteristics cannot be extracted.</exception>
-    private string ExtractWeatherCharacteristics(HtmlNode cell, string filePath)
+    private List<string> ExtractWeatherCharacteristics(HtmlNode cell, string filePath)
     {
         if (cell == null)
         {
@@ -247,14 +248,27 @@ public class RealWeatherHtmlParser
                 $"Weather characteristics div (ov_hide) not found in file '{filePath}'");
         }
 
-        var text = weatherDiv.InnerText?.Trim();
+        var text = weatherDiv.InnerText;
         if (string.IsNullOrWhiteSpace(text))
         {
             throw new InvalidOperationException(
                 $"Empty or whitespace weather characteristics found in file '{filePath}'");
         }
 
-        return text;
+        var normalizedValues = text
+            .ToLowerInvariant()
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(value => value.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToList();
+
+        if (normalizedValues.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"No weather characteristics extracted from text '{text}' in file '{filePath}'");
+        }
+
+        return normalizedValues;
     }
 
     /// <summary>

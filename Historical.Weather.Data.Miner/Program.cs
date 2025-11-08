@@ -1,10 +1,11 @@
-﻿using Microsoft.Extensions.Configuration;
+﻿using Historical.Weather.Data.Miner;
+using HtmlLogWriter;
+using Microsoft.Extensions.Configuration;
 using Serilog;
 using Serilog.Events;
-using System.IO;
 using System.Diagnostics;
-using Historical.Weather.Data.Miner;
-using HtmlLogWriter;
+using System.IO;
+using System.Linq;
 
 // Generate DateTime-based log file path
 var logDateTime = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
@@ -77,20 +78,6 @@ try
     
     totalStopwatch.Stop();
 
-    // Write tables to HTML
-    using (var htmlWriter = new HtmlLogWriter.HtmlLogWriter(logFilePath, "Historical Weather Data Miner"))
-    {
-        WriteRowCountDistributionTable(htmlWriter, rawParseResultsWithPaths);
-
-        // Create distribution diagram from the row counts
-        var rowCounts = rawParseResultsWithPaths.Select(r => (double)r.Result.WeatherDataRows.Count).ToList();
-        if (rowCounts.Count > 0)
-        {
-            htmlWriter.WriteDistributionDiagram(rowCounts, "Distribution of Row List Counts");
-        }
-        WriteTimesDistributionTable(htmlWriter, rawParseResultsWithPaths);
-    }
-
     // Log parsing statistics
     var totalTime = totalStopwatch.Elapsed.TotalSeconds;
     var averageTime = files.Length > 0 ? (totalFileProcessingTime / (double)files.Length) / 1000.0 : 0;
@@ -101,6 +88,8 @@ try
     Log.Information("  Parsing unsuccessful: {ParsingUnsuccessfulCount}", parsingUnsuccessfulCount);
     Log.Information("  Total parsing time: {TotalTime:F2} seconds", totalTime);
     Log.Information("  Average time per file: {AverageTime:F3} seconds", averageTime);
+
+    LogAvailableWeatherCharacteristics(rawParseResultsWithPaths);
 
     var normalizedParseResultsWithPaths = NormalizeParseResults(
         rawParseResultsWithPaths,
@@ -115,6 +104,20 @@ try
     Log.Information("  Files missing expected observation times: {MissingTimeEntriesCount}", missingTimeEntriesCount);
 
     Log.Information("Finish");
+
+    // Write tables to HTML
+    using (var htmlWriter = new HtmlLogWriter.HtmlLogWriter(logFilePath, "Historical Weather Data Miner"))
+    {
+        WriteRowCountDistributionTable(htmlWriter, rawParseResultsWithPaths);
+
+        // Create distribution diagram from the row counts
+        var rowCounts = rawParseResultsWithPaths.Select(r => (double)r.Result.WeatherDataRows.Count).ToList();
+        if (rowCounts.Count > 0)
+        {
+            htmlWriter.WriteDistributionDiagram(rowCounts, "Distribution of Row List Counts");
+        }
+        WriteTimesDistributionTable(htmlWriter, rawParseResultsWithPaths);
+    }
 }
 catch (Exception ex)
 {
@@ -214,6 +217,26 @@ static void WriteTimesDistributionTable(HtmlLogWriter.HtmlLogWriter writer, List
         .ToList();
     
     writer.WriteTable(tableData, "Times Distribution");
+}
+
+static void LogAvailableWeatherCharacteristics(List<(string FilePath, HtmlParseResult Result)> parseResultsWithPaths)
+{
+    var orderedCharacteristics = parseResultsWithPaths
+        .SelectMany(result => result.Result.WeatherDataRows)
+        .SelectMany(row => row.WeatherCharacteristics)
+        .Where(characteristic => !string.IsNullOrWhiteSpace(characteristic))
+        .Distinct()
+        .OrderBy(characteristic => characteristic)
+        .ToList();
+
+    if (orderedCharacteristics.Count == 0)
+    {
+        Log.Warning("No weather characteristics were extracted across the parsed files.");
+        return;
+    }
+
+    Log.Information("Available weather characteristics (unique, ordered): {WeatherCharacteristics}", string.Join(", ", orderedCharacteristics));
+    Log.Information("Total unique weather characteristics: {WeatherCharacteristicsCount}", orderedCharacteristics.Count);
 }
 
 static HtmlParseResult NormalizeObservationTimesOrThrow(

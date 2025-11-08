@@ -1,4 +1,7 @@
-                                                                                                    namespace Historical.Weather.Data.Miner;
+using System;
+using System.Collections.Generic;
+
+namespace Historical.Weather.Data.Miner;
 
 /// <summary>
 /// Represents a single row of weather data from the archive table.
@@ -11,9 +14,9 @@ public class WeatherDataRow
     public DateTime Time { get; }
 
     /// <summary>
-    /// Gets the weather characteristics (e.g., "Сплошная облачность").
+    /// Gets the normalized weather characteristics.
     /// </summary>
-    public string WeatherCharacteristics { get; }
+    public List<string> WeatherCharacteristics { get; }
 
     /// <summary>
     /// Gets the air temperature in degrees Celsius.
@@ -44,7 +47,7 @@ public class WeatherDataRow
     /// Initializes a new instance of the WeatherDataRow class.
     /// </summary>
     /// <param name="time">The date and time value.</param>
-    /// <param name="weatherCharacteristics">The weather characteristics.</param>
+    /// <param name="weatherCharacteristics">The normalized weather characteristics.</param>
     /// <param name="temperature">The air temperature in degrees Celsius.</param>
     /// <param name="windDirection">The wind direction.</param>
     /// <param name="windSpeed">The wind speed in m/s.</param>
@@ -52,7 +55,7 @@ public class WeatherDataRow
     /// <param name="humidity">The air humidity percentage.</param>
     public WeatherDataRow(
         DateTime time,
-        string weatherCharacteristics,
+        List<string> weatherCharacteristics,
         int temperature,
         string windDirection,
         decimal windSpeed,
@@ -60,7 +63,7 @@ public class WeatherDataRow
         int humidity)
     {
         Time = time;
-        WeatherCharacteristics = weatherCharacteristics;
+        WeatherCharacteristics = weatherCharacteristics ?? throw new ArgumentNullException(nameof(weatherCharacteristics));
         Temperature = temperature;
         WindDirection = windDirection;
         WindSpeed = windSpeed;
