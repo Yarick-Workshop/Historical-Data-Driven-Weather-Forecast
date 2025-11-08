@@ -1,5 +1,5 @@
-using HtmlAgilityPack;
 using System.Collections.Generic;
+using HtmlAgilityPack;
 using System.Text.RegularExpressions;
 using Serilog;
 using System.Globalization;
@@ -231,7 +231,7 @@ public class RealWeatherHtmlParser
     /// <param name="filePath">The file path for error reporting.</param>
     /// <returns>The extracted weather characteristics, never null.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the cell is null or weather characteristics cannot be extracted.</exception>
-    private List<string> ExtractWeatherCharacteristics(HtmlNode cell, string filePath)
+    private WeatherCharacteristics ExtractWeatherCharacteristics(HtmlNode cell, string filePath)
     {
         if (cell == null)
         {
@@ -268,7 +268,7 @@ public class RealWeatherHtmlParser
                 $"No weather characteristics extracted from text '{text}' in file '{filePath}'");
         }
 
-        return normalizedValues;
+        return WeatherCharacteristicConverter.FromStrings(normalizedValues, filePath);
     }
 
     /// <summary>

@@ -89,8 +89,6 @@ try
     Log.Information("  Total parsing time: {TotalTime:F2} seconds", totalTime);
     Log.Information("  Average time per file: {AverageTime:F3} seconds", averageTime);
 
-    LogAvailableWeatherCharacteristics(rawParseResultsWithPaths);
-
     var normalizedParseResultsWithPaths = NormalizeParseResults(
         rawParseResultsWithPaths,
         expectedObservationTimes,
@@ -217,26 +215,6 @@ static void WriteTimesDistributionTable(HtmlLogWriter.HtmlLogWriter writer, List
         .ToList();
     
     writer.WriteTable(tableData, "Times Distribution");
-}
-
-static void LogAvailableWeatherCharacteristics(List<(string FilePath, HtmlParseResult Result)> parseResultsWithPaths)
-{
-    var orderedCharacteristics = parseResultsWithPaths
-        .SelectMany(result => result.Result.WeatherDataRows)
-        .SelectMany(row => row.WeatherCharacteristics)
-        .Where(characteristic => !string.IsNullOrWhiteSpace(characteristic))
-        .Distinct()
-        .OrderBy(characteristic => characteristic)
-        .ToList();
-
-    if (orderedCharacteristics.Count == 0)
-    {
-        Log.Warning("No weather characteristics were extracted across the parsed files.");
-        return;
-    }
-
-    Log.Information("Available weather characteristics (unique, ordered): {WeatherCharacteristics}", string.Join(", ", orderedCharacteristics));
-    Log.Information("Total unique weather characteristics: {WeatherCharacteristicsCount}", orderedCharacteristics.Count);
 }
 
 static HtmlParseResult NormalizeObservationTimesOrThrow(

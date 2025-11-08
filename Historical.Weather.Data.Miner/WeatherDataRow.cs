@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 
 namespace Historical.Weather.Data.Miner;
 
@@ -14,9 +13,9 @@ public class WeatherDataRow
     public DateTime Time { get; }
 
     /// <summary>
-    /// Gets the normalized weather characteristics.
+    /// Gets the weather characteristics flags.
     /// </summary>
-    public List<string> WeatherCharacteristics { get; }
+    public WeatherCharacteristics WeatherCharacteristics { get; }
 
     /// <summary>
     /// Gets the air temperature in degrees Celsius.
@@ -47,7 +46,7 @@ public class WeatherDataRow
     /// Initializes a new instance of the WeatherDataRow class.
     /// </summary>
     /// <param name="time">The date and time value.</param>
-    /// <param name="weatherCharacteristics">The normalized weather characteristics.</param>
+    /// <param name="weatherCharacteristics">The weather characteristics flags.</param>
     /// <param name="temperature">The air temperature in degrees Celsius.</param>
     /// <param name="windDirection">The wind direction.</param>
     /// <param name="windSpeed">The wind speed in m/s.</param>
@@ -55,7 +54,7 @@ public class WeatherDataRow
     /// <param name="humidity">The air humidity percentage.</param>
     public WeatherDataRow(
         DateTime time,
-        List<string> weatherCharacteristics,
+        WeatherCharacteristics weatherCharacteristics,
         int temperature,
         string windDirection,
         decimal windSpeed,
@@ -63,7 +62,7 @@ public class WeatherDataRow
         int humidity)
     {
         Time = time;
-        WeatherCharacteristics = weatherCharacteristics ?? throw new ArgumentNullException(nameof(weatherCharacteristics));
+        WeatherCharacteristics = weatherCharacteristics;
         Temperature = temperature;
         WindDirection = windDirection;
         WindSpeed = windSpeed;
