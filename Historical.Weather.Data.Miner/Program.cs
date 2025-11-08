@@ -22,7 +22,7 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
-    Log.Debug("Start");
+    Log.Information("Start");
 
     // Build configuration
     var projectDir = Path.Combine(Directory.GetCurrentDirectory(), "Historical.Weather.Data.Miner");
@@ -58,103 +58,63 @@ try
 
     // Initialize counters and timing
     var totalStopwatch = Stopwatch.StartNew();
-    int parsingSuccessfulCount = 0;
-    int parsingUnsuccessfulCount = 0;
-    long totalFileProcessingTime = 0;
 
     // Initialize HTML parser
     var htmlParser = new RealWeatherHtmlParser();
 
     // Collect all parse results with their file paths
-    var rawParseResultsWithPaths = new List<(string FilePath, HtmlParseResult Result)>();
+    var rawParseResultsWithPaths = ParseFiles(
+        files,
+        htmlParser,
+        out var parsingSuccessfulCount,
+        out var parsingUnsuccessfulCount,
+        out var totalFileProcessingTime);
 
     // Prepare expected observation times (00:00 to 21:00 with 3-hour step)
     var expectedObservationTimes = Enumerable.Range(0, 8)
         .Select(i => TimeSpan.FromHours(i * 3))
         .ToList();
-
-    int missingTimeEntriesCount = 0;
-
-    // Parse each HTML file
-    foreach (var file in files)
-    {
-        Log.Debug("File found: {FilePath}", file);
-        
-        var fileStopwatch = Stopwatch.StartNew();
-        
-        try
-        {
-            // Parse the HTML file (all parsing logic is inside ParseFile)
-            var result = htmlParser.ParseFile(file);
-
-            rawParseResultsWithPaths.Add((file, result));
-            
-            parsingSuccessfulCount++;
-            Log.Debug("Successfully parsed HTML file: {FilePath}", file);
-        }
-        catch (Exception ex)
-        {
-            parsingUnsuccessfulCount++;
-            Log.Error(ex, "Failed to parse HTML file: {FilePath}", file);
-        }
-        finally
-        {
-            fileStopwatch.Stop();
-            totalFileProcessingTime += fileStopwatch.ElapsedMilliseconds;
-        }
-    }
-
-    // Perform observation time normalization after parsing all files
-    var normalizedParseResultsWithPaths = new List<(string FilePath, HtmlParseResult Result)>();
-    int normalizationSuccessfulCount = 0;
-    int normalizationUnsuccessfulCount = 0;
-
-    foreach (var (filePath, parseResult) in rawParseResultsWithPaths)
-    {
-        try
-        {
-            var normalizedResult = NormalizeObservationTimesOrThrow(filePath, parseResult, expectedObservationTimes, ref missingTimeEntriesCount);
-            normalizedParseResultsWithPaths.Add((filePath, normalizedResult));
-            normalizationSuccessfulCount++;
-        }
-        catch (Exception normalizationException)
-        {
-            normalizationUnsuccessfulCount++;
-            Log.Error(normalizationException, "Failed to normalize HTML file: {FilePath}", filePath);
-        }
-    }
-
+    
     totalStopwatch.Stop();
-
-    // Log statistics
-    var totalTime = totalStopwatch.Elapsed.TotalSeconds;
-    var averageTime = files.Length > 0 ? (totalFileProcessingTime / (double)files.Length) / 1000.0 : 0;
-
-    Log.Debug("Finish");
-    Log.Information("Processing Statistics:");
-    Log.Information("  Total files processed: {TotalFiles}", files.Length);
-    Log.Information("  Parsing successful: {ParsingSuccessfulCount}", parsingSuccessfulCount);
-    Log.Information("  Parsing unsuccessful: {ParsingUnsuccessfulCount}", parsingUnsuccessfulCount);
-    Log.Information("  Normalization successful: {NormalizationSuccessfulCount}", normalizationSuccessfulCount);
-    Log.Information("  Normalization unsuccessful: {NormalizationUnsuccessfulCount}", normalizationUnsuccessfulCount);
-    Log.Information("  Total processing time: {TotalTime:F2} seconds", totalTime);
-    Log.Information("  Average time per file: {AverageTime:F3} seconds", averageTime);
-    Log.Information("  Files missing expected observation times: {MissingTimeEntriesCount}", missingTimeEntriesCount);
 
     // Write tables to HTML
     using (var htmlWriter = new HtmlLogWriter.HtmlLogWriter(logFilePath, "Historical Weather Data Miner"))
     {
-        WriteRowCountDistributionTable(htmlWriter, normalizedParseResultsWithPaths);
-        
+        WriteRowCountDistributionTable(htmlWriter, rawParseResultsWithPaths);
+
         // Create distribution diagram from the row counts
-        var rowCounts = normalizedParseResultsWithPaths.Select(r => (double)r.Result.WeatherDataRows.Count).ToList();
+        var rowCounts = rawParseResultsWithPaths.Select(r => (double)r.Result.WeatherDataRows.Count).ToList();
         if (rowCounts.Count > 0)
         {
             htmlWriter.WriteDistributionDiagram(rowCounts, "Distribution of Row List Counts");
         }
-        
-        WriteTimesDistributionTable(htmlWriter, normalizedParseResultsWithPaths);
+        WriteTimesDistributionTable(htmlWriter, rawParseResultsWithPaths);
     }
+
+    // Log parsing statistics
+    var totalTime = totalStopwatch.Elapsed.TotalSeconds;
+    var averageTime = files.Length > 0 ? (totalFileProcessingTime / (double)files.Length) / 1000.0 : 0;
+
+    Log.Information("Parsing Statistics:");
+    Log.Information("  Total files processed: {TotalFiles}", files.Length);
+    Log.Information("  Parsing successful: {ParsingSuccessfulCount}", parsingSuccessfulCount);
+    Log.Information("  Parsing unsuccessful: {ParsingUnsuccessfulCount}", parsingUnsuccessfulCount);
+    Log.Information("  Total parsing time: {TotalTime:F2} seconds", totalTime);
+    Log.Information("  Average time per file: {AverageTime:F3} seconds", averageTime);
+
+    var normalizedParseResultsWithPaths = NormalizeParseResults(
+        rawParseResultsWithPaths,
+        expectedObservationTimes,
+        out var missingTimeEntriesCount,
+        out var normalizationSuccessfulCount,
+        out var normalizationUnsuccessfulCount);
+
+    Log.Information("Normalization Statistics:");
+    Log.Information("  Normalization successful: {NormalizationSuccessfulCount}", normalizationSuccessfulCount);
+    Log.Information("  Normalization unsuccessful: {NormalizationUnsuccessfulCount}", normalizationUnsuccessfulCount);
+    Log.Information("  Files missing expected observation times: {MissingTimeEntriesCount}", missingTimeEntriesCount);
+
+    Log.Information("Finish");
 }
 catch (Exception ex)
 {
@@ -315,4 +275,76 @@ static HtmlParseResult NormalizeObservationTimesOrThrow(
     }
 
     return new HtmlParseResult(parseResult.CityName, parseResult.Date, new List<WeatherDataRow>(normalizedRows));
+}
+
+static List<(string FilePath, HtmlParseResult Result)> ParseFiles(
+    string[] files,
+    RealWeatherHtmlParser htmlParser,
+    out int parsingSuccessfulCount,
+    out int parsingUnsuccessfulCount,
+    out long totalFileProcessingTime)
+{
+    var rawParseResultsWithPaths = new List<(string FilePath, HtmlParseResult Result)>();
+    parsingSuccessfulCount = 0;
+    parsingUnsuccessfulCount = 0;
+    totalFileProcessingTime = 0;
+
+    foreach (var file in files)
+    {
+        Log.Debug("File found: {FilePath}", file);
+
+        var fileStopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var result = htmlParser.ParseFile(file);
+
+            rawParseResultsWithPaths.Add((file, result));
+
+            parsingSuccessfulCount++;
+            Log.Debug("Successfully parsed HTML file: {FilePath}", file);
+        }
+        catch (Exception ex)
+        {
+            parsingUnsuccessfulCount++;
+            Log.Error(ex, "Failed to parse HTML file: {FilePath}", file);
+        }
+        finally
+        {
+            fileStopwatch.Stop();
+            totalFileProcessingTime += fileStopwatch.ElapsedMilliseconds;
+        }
+    }
+
+    return rawParseResultsWithPaths;
+}
+
+static List<(string FilePath, HtmlParseResult Result)> NormalizeParseResults(
+    List<(string FilePath, HtmlParseResult Result)> rawParseResultsWithPaths,
+    IReadOnlyCollection<TimeSpan> expectedObservationTimes,
+    out int missingTimeEntriesCount,
+    out int normalizationSuccessfulCount,
+    out int normalizationUnsuccessfulCount)
+{
+    var normalizedParseResultsWithPaths = new List<(string FilePath, HtmlParseResult Result)>();
+    missingTimeEntriesCount = 0;
+    normalizationSuccessfulCount = 0;
+    normalizationUnsuccessfulCount = 0;
+
+    foreach (var (filePath, parseResult) in rawParseResultsWithPaths)
+    {
+        try
+        {
+            var normalizedResult = NormalizeObservationTimesOrThrow(filePath, parseResult, expectedObservationTimes, ref missingTimeEntriesCount);
+            normalizedParseResultsWithPaths.Add((filePath, normalizedResult));
+            normalizationSuccessfulCount++;
+        }
+        catch (Exception normalizationException)
+        {
+            normalizationUnsuccessfulCount++;
+            Log.Error(normalizationException, "Failed to normalize HTML file: {FilePath}", filePath);
+        }
+    }
+
+    return normalizedParseResultsWithPaths;
 }
