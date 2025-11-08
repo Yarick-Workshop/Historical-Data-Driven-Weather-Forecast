@@ -72,6 +72,9 @@ try
         out var parsingUnsuccessfulCount,
         out var totalFileProcessingTime);
 
+    var rawParseResultsByPlace = OrganizeParseResultsByPlaceAndDate(rawParseResultsWithPaths);
+    var flattenedRawParseResults = FlattenParseResults(rawParseResultsByPlace).ToList();
+
     // Prepare expected observation times (00:00 to 21:00 with 3-hour step)
     var expectedObservationTimes = Enumerable.Range(0, 8)
         .Select(i => TimeSpan.FromHours(i * 3))
@@ -92,8 +95,8 @@ try
 
     LogAllKnownWeatherCharacteristics();
 
-    var normalizedParseResultsWithPaths = NormalizeParseResults(
-        rawParseResultsWithPaths,
+    _ = NormalizeParseResults(
+        rawParseResultsByPlace,
         expectedObservationTimes,
         out var missingTimeEntriesCount,
         out var normalizationSuccessfulCount,
@@ -109,15 +112,15 @@ try
     // Write tables to HTML
     using (var htmlWriter = new HtmlLogWriter.HtmlLogWriter(logFilePath, "Historical Weather Data Miner"))
     {
-        WriteRowCountDistributionTable(htmlWriter, rawParseResultsWithPaths);
+        WriteRowCountDistributionTable(htmlWriter, flattenedRawParseResults);
 
         // Create distribution diagram from the row counts
-        var rowCounts = rawParseResultsWithPaths.Select(r => (double)r.Result.WeatherDataRows.Count).ToList();
+        var rowCounts = flattenedRawParseResults.Select(r => (double)r.Result.WeatherDataRows.Count).ToList();
         if (rowCounts.Count > 0)
         {
             htmlWriter.WriteDistributionDiagram(rowCounts, "Distribution of Row List Counts");
         }
-        WriteTimesDistributionTable(htmlWriter, rawParseResultsWithPaths);
+        WriteTimesDistributionTable(htmlWriter, flattenedRawParseResults);
     }
 }
 catch (Exception ex)
@@ -133,11 +136,11 @@ finally
 /// Generates and writes the row count distribution table to HTML.
 /// </summary>
 /// <param name="writer">The HTML writer instance.</param>
-/// <param name="parseResultsWithPaths">List of parse results with their file paths.</param>
-static void WriteRowCountDistributionTable(HtmlLogWriter.HtmlLogWriter writer, List<(string FilePath, HtmlParseResult Result)> parseResultsWithPaths)
+/// <param name="parseResults">Collection of parsed file information entries.</param>
+static void WriteRowCountDistributionTable(HtmlLogWriter.HtmlLogWriter writer, IEnumerable<ParsedFileInfo> parseResults)
 {
-    var tableData = parseResultsWithPaths
-        .GroupBy(r => r.Result.WeatherDataRows.Count)
+    var tableData = parseResults
+        .GroupBy(info => info.Result.WeatherDataRows.Count)
         .Select(g => new
         {
             RealWeatherDataRowsCount = g.Key,
@@ -145,7 +148,7 @@ static void WriteRowCountDistributionTable(HtmlLogWriter.HtmlLogWriter writer, L
         })
         .OrderBy(x => x.RealWeatherDataRowsCount)
         .ToList();
-    
+
     writer.WriteTable(tableData, "Row List Count Distribution");
 }
 
@@ -153,57 +156,43 @@ static void WriteRowCountDistributionTable(HtmlLogWriter.HtmlLogWriter writer, L
 /// Generates and writes the times distribution table to HTML.
 /// </summary>
 /// <param name="writer">The HTML writer instance.</param>
-/// <param name="parseResultsWithPaths">List of parse results with their file paths.</param>
-static void WriteTimesDistributionTable(HtmlLogWriter.HtmlLogWriter writer, List<(string FilePath, HtmlParseResult Result)> parseResultsWithPaths)
+/// <param name="parseResults">Collection of parsed file information entries.</param>
+static void WriteTimesDistributionTable(HtmlLogWriter.HtmlLogWriter writer, IEnumerable<ParsedFileInfo> parseResults)
 {
-    var tableData = parseResultsWithPaths
-        .Select(r =>
+    var tableData = parseResults
+        .Select(info =>
         {
-            var fileTimes = r.Result.WeatherDataRows
+            var fileTimes = info.Result.WeatherDataRows
                 .Select(row => row.Time.TimeOfDay)
                 .OrderBy(t => t)
                 .ToList();
             var timesKey = string.Join(",", fileTimes.Select(t => t.ToString(@"hh\:mm")));
-            return new { TimesKey = timesKey, Result = r };
+            return new { TimesKey = timesKey, Info = info, FileTimes = fileTimes };
         })
         .GroupBy(x => x.TimesKey)
         .Select(g =>
         {
-            var results = g.Select(x => x.Result).ToList();
-            var dates = results
-                .Where(r => !string.IsNullOrEmpty(r.Result.Date))
-                .Select(r => DateTime.ParseExact(r.Result.Date!, "yyyy-MM-dd", null))
+            var infos = g.Select(x => x.Info).ToList();
+            var timesList = g.First().FileTimes;
+
+            var rowsCount = infos.First().Result.WeatherDataRows.Count;
+            var parsedFilesCount = infos.Count;
+            var dates = infos.Select(info => info.Date).ToList();
+
+            var exampleUris = infos
+                .Take(parsedFilesCount == 1 ? 1 : 2)
+                .Select(info => info.FilePath)
                 .ToList();
-            
-            // Get the times list (all should be the same since we grouped by the key)
-            var timesList = results.First().Result.WeatherDataRows
-                .Select(row => row.Time.TimeOfDay)
-                .OrderBy(t => t)
-                .ToList();
-            
-            // Get rows count (all files in the group should have the same number of rows)
-            var rowsCount = results.First().Result.WeatherDataRows.Count;
-            
-            // Get parsed files count
-            var parsedFilesCount = results.Count;
-            
-            // Get example URIs (1 if only 1 file, 2 if more)
-            var exampleUris = results
-                .Take(results.Count == 1 ? 1 : 2)
-                .Select(r => r.FilePath)
-                .ToList();
-            
-            // Convert file paths to HTML links
+
             var exampleLinks = exampleUris.Select(filePath =>
             {
                 var fileName = Path.GetFileName(filePath);
-                // Convert absolute file path to file:// URI
-                var fileUri = Path.IsPathRooted(filePath) 
-                    ? new Uri(filePath).AbsoluteUri 
+                var fileUri = Path.IsPathRooted(filePath)
+                    ? new Uri(filePath).AbsoluteUri
                     : new Uri(Path.GetFullPath(filePath)).AbsoluteUri;
                 return $"<a href=\"{fileUri}\" target=\"_blank\">{fileName}</a>";
             }).ToList();
-            
+
             return new
             {
                 Times = string.Join(", ", timesList.Select(t => t.ToString(@"hh\:mm"))),
@@ -216,7 +205,7 @@ static void WriteTimesDistributionTable(HtmlLogWriter.HtmlLogWriter writer, List
         })
         .OrderBy(x => x.MinimumDate)
         .ToList();
-    
+
     writer.WriteTable(tableData, "Times Distribution");
 }
 
@@ -323,46 +312,123 @@ static List<(string FilePath, HtmlParseResult Result)> ParseFiles(
     return rawParseResultsWithPaths;
 }
 
-static List<(string FilePath, HtmlParseResult Result)> NormalizeParseResults(
-    List<(string FilePath, HtmlParseResult Result)> rawParseResultsWithPaths,
+static Dictionary<string, SortedDictionary<DateTime, (string FilePath, HtmlParseResult Result)>> OrganizeParseResultsByPlaceAndDate(
+    IEnumerable<(string FilePath, HtmlParseResult Result)> parseResults)
+{
+    var structuredResults = new Dictionary<string, SortedDictionary<DateTime, (string FilePath, HtmlParseResult Result)>>(StringComparer.OrdinalIgnoreCase);
+
+    foreach (var (filePath, result) in parseResults)
+    {
+        var place = string.IsNullOrWhiteSpace(result.CityName) ? "Unknown" : result.CityName!.Trim();
+
+        if (string.IsNullOrWhiteSpace(result.Date) ||
+            !DateTime.TryParseExact(result.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
+        {
+            Log.Warning("Skipping file {FilePath} due to missing or invalid date value '{DateValue}'.", filePath, result.Date);
+            continue;
+        }
+
+        if (!structuredResults.TryGetValue(place, out var resultsByDate))
+        {
+            resultsByDate = new SortedDictionary<DateTime, (string FilePath, HtmlParseResult Result)>();
+            structuredResults[place] = resultsByDate;
+        }
+
+        if (resultsByDate.ContainsKey(parsedDate))
+        {
+            Log.Warning("Duplicate entry detected for {Place} on {Date}. Overwriting previous data with file {FilePath}.", place, parsedDate.ToString("yyyy-MM-dd"), filePath);
+        }
+
+        resultsByDate[parsedDate] = (filePath, result);
+    }
+
+    return structuredResults;
+}
+
+static IEnumerable<ParsedFileInfo> FlattenParseResults(
+    Dictionary<string, SortedDictionary<DateTime, (string FilePath, HtmlParseResult Result)>> parseResultsByPlace)
+{
+    foreach (var (place, resultsByDate) in parseResultsByPlace)
+    {
+        foreach (var (date, entry) in resultsByDate)
+        {
+            yield return new ParsedFileInfo(place, date, entry.FilePath, entry.Result);
+        }
+    }
+}
+
+static Dictionary<string, SortedDictionary<DateTime, (string FilePath, HtmlParseResult Result)>> NormalizeParseResults(
+    Dictionary<string, SortedDictionary<DateTime, (string FilePath, HtmlParseResult Result)>> rawParseResultsByPlace,
     IReadOnlyCollection<TimeSpan> expectedObservationTimes,
     out int missingTimeEntriesCount,
     out int normalizationSuccessfulCount,
     out int normalizationUnsuccessfulCount)
 {
-    var normalizedParseResultsWithPaths = new List<(string FilePath, HtmlParseResult Result)>();
+    var normalizedParseResultsByPlace = new Dictionary<string, SortedDictionary<DateTime, (string FilePath, HtmlParseResult Result)>>(StringComparer.OrdinalIgnoreCase);
     missingTimeEntriesCount = 0;
     normalizationSuccessfulCount = 0;
     normalizationUnsuccessfulCount = 0;
 
-    foreach (var (filePath, parseResult) in rawParseResultsWithPaths)
+    foreach (var (place, dateEntries) in rawParseResultsByPlace)
     {
-        HtmlParseResult? normalizedResult = null;
+        var normalizedDateEntries = new SortedDictionary<DateTime, (string FilePath, HtmlParseResult Result)>();
+        normalizedParseResultsByPlace[place] = normalizedDateEntries;
 
-        try
-        {
-            normalizedResult = NormalizeObservationTimesOrThrow(filePath, parseResult, expectedObservationTimes, ref missingTimeEntriesCount);
-        }
-        catch (Exception normalizationException)
-        {
-            if (TryInterpolateMissingObservationTimes(filePath, parseResult, expectedObservationTimes, out var interpolatedResult))
-            {
-                normalizedResult = interpolatedResult;
-                Log.Information("Normalized file {FilePath} using interpolation for missing observations.", filePath);
-            }
-            else
-            {
-                normalizationUnsuccessfulCount++;
-                Log.Error(normalizationException, "Unable to normalize HTML file {FilePath} even after interpolation attempt.", filePath);
-                continue;
-            }
-        }
+        var orderedDates = dateEntries.Keys.OrderBy(date => date).ToList();
 
-        normalizedParseResultsWithPaths.Add((filePath, normalizedResult));
-        normalizationSuccessfulCount++;
+        for (var index = 0; index < orderedDates.Count; index++)
+        {
+            var date = orderedDates[index];
+            var currentEntry = dateEntries[date];
+
+            HtmlParseResult? previousDayResult = null;
+            if (index > 0)
+            {
+                var previousDate = orderedDates[index - 1];
+                if (normalizedDateEntries.TryGetValue(previousDate, out var normalizedPreviousEntry))
+                {
+                    previousDayResult = normalizedPreviousEntry.Result;
+                }
+                else
+                {
+                    previousDayResult = dateEntries[previousDate].Result;
+                }
+            }
+
+            HtmlParseResult? nextDayResult = null;
+            if (index < orderedDates.Count - 1)
+            {
+                var nextDate = orderedDates[index + 1];
+                nextDayResult = dateEntries[nextDate].Result;
+            }
+
+            HtmlParseResult? normalizedResult = null;
+
+            try
+            {
+                normalizedResult = NormalizeObservationTimesOrThrow(currentEntry.FilePath, currentEntry.Result, expectedObservationTimes, ref missingTimeEntriesCount);
+            }
+            catch (Exception normalizationException)
+            {
+                if (TryInterpolateMissingObservationTimes(currentEntry.FilePath, currentEntry.Result, expectedObservationTimes, previousDayResult, nextDayResult, out var interpolatedResult))
+                {
+                    normalizedResult = interpolatedResult;
+                    Log.Information("Normalized file {FilePath} using interpolation for missing observations.", currentEntry.FilePath);
+                }
+                else
+                {
+                    normalizationUnsuccessfulCount++;
+                    Log.Error(normalizationException, "Unable to normalize HTML file {FilePath} even after interpolation attempt.", currentEntry.FilePath);
+                    continue;
+                }
+            }
+
+            normalizedDateEntries[date] = (currentEntry.FilePath, normalizedResult);
+            normalizationSuccessfulCount++;
+        }
     }
 
-    return normalizedParseResultsWithPaths;
+    return normalizedParseResultsByPlace;
 }
 
 static void LogAllKnownWeatherCharacteristics()
@@ -383,6 +449,8 @@ static bool TryInterpolateMissingObservationTimes(
     string filePath,
     HtmlParseResult parseResult,
     IReadOnlyCollection<TimeSpan> expectedObservationTimes,
+    HtmlParseResult? previousDayResult,
+    HtmlParseResult? nextDayResult,
     out HtmlParseResult interpolatedResult)
 {
     interpolatedResult = default!;
@@ -401,8 +469,34 @@ static bool TryInterpolateMissingObservationTimes(
         return false;
     }
 
-    var sortedExistingTimes = rowsGroupedByTime.Keys.OrderBy(time => time).ToList();
-    var baseDate = DetermineBaseDate(parseResult, rowsGroupedByTime[sortedExistingTimes[0]]);
+    var candidateRows = new List<WeatherDataRow>(rowsGroupedByTime.Count
+        + (previousDayResult?.WeatherDataRows?.Count ?? 0)
+        + (nextDayResult?.WeatherDataRows?.Count ?? 0));
+
+    candidateRows.AddRange(rowsGroupedByTime.Values);
+
+    if (previousDayResult?.WeatherDataRows != null)
+    {
+        candidateRows.AddRange(previousDayResult.WeatherDataRows);
+    }
+
+    if (nextDayResult?.WeatherDataRows != null)
+    {
+        candidateRows.AddRange(nextDayResult.WeatherDataRows);
+    }
+
+    candidateRows = candidateRows
+        .Where(row => row != null)
+        .OrderBy(row => row.Time)
+        .ToList();
+
+    if (candidateRows.Count < 2)
+    {
+        return false;
+    }
+
+    var firstExistingRow = rowsGroupedByTime.First().Value;
+    var baseDate = DetermineBaseDate(parseResult, firstExistingRow);
     var sortedExpectedTimes = expectedObservationTimes.OrderBy(time => time).ToList();
 
     var normalizedRows = new List<WeatherDataRow>(sortedExpectedTimes.Count);
@@ -415,7 +509,7 @@ static bool TryInterpolateMissingObservationTimes(
             continue;
         }
 
-        if (!TryCreateInterpolatedRow(expectedTime, baseDate, rowsGroupedByTime, sortedExistingTimes, out var interpolatedRow))
+        if (!TryCreateInterpolatedRow(expectedTime, baseDate, candidateRows, out var interpolatedRow))
         {
             Log.Debug("Interpolation not possible for observation time {ObservationTime} in file {FilePath}", expectedTime.ToString(@"hh\:mm"), filePath);
             return false;
@@ -443,39 +537,28 @@ static DateTime DetermineBaseDate(HtmlParseResult parseResult, WeatherDataRow re
 static bool TryCreateInterpolatedRow(
     TimeSpan targetTime,
     DateTime baseDate,
-    IReadOnlyDictionary<TimeSpan, WeatherDataRow> rowsByTime,
-    IReadOnlyList<TimeSpan> sortedExistingTimes,
+    IReadOnlyList<WeatherDataRow> orderedCandidateRows,
     out WeatherDataRow interpolatedRow)
 {
-    // TODO, to table and fix afterwards!!! instead this way more data will be fixed
     interpolatedRow = default!;
 
-    var previousCandidates = sortedExistingTimes.Where(time => time < targetTime).ToList();
-    var nextCandidates = sortedExistingTimes.Where(time => time > targetTime).ToList();
-
-    if (previousCandidates.Count == 0 || nextCandidates.Count == 0)
-    {
-        return false;
-    }
-
-    var previousTime = previousCandidates[^1];
-    var nextTime = nextCandidates[0];
-
-    var previousRow = rowsByTime[previousTime];
-    var nextRow = rowsByTime[nextTime];
-
-    var previousDateTime = previousRow.Time;
-    var nextDateTime = nextRow.Time;
-
-    if (nextDateTime <= previousDateTime)
-    {
-        return false;
-    }
-
     var targetDateTime = baseDate.Add(targetTime);
-    var elapsedMinutes = (targetDateTime - previousDateTime).TotalMinutes;
-    var totalMinutes = (nextDateTime - previousDateTime).TotalMinutes;
 
+    var previousRow = orderedCandidateRows.LastOrDefault(row => row.Time < targetDateTime);
+    var nextRow = orderedCandidateRows.FirstOrDefault(row => row.Time > targetDateTime);
+
+    if (previousRow == null || nextRow == null)
+    {
+        return false;
+    }
+
+    var totalMinutes = (nextRow.Time - previousRow.Time).TotalMinutes;
+    if (totalMinutes <= 0)
+    {
+        return false;
+    }
+
+    var elapsedMinutes = (targetDateTime - previousRow.Time).TotalMinutes;
     if (elapsedMinutes < 0 || elapsedMinutes > totalMinutes)
     {
         return false;
@@ -515,3 +598,5 @@ static decimal InterpolateDecimal(decimal previousValue, decimal nextValue, doub
     var interpolatedValue = previousValue + (nextValue - previousValue) * ratioDecimal;
     return decimal.Round(interpolatedValue, 2, MidpointRounding.AwayFromZero);
 }
+
+file sealed record ParsedFileInfo(string Place, DateTime Date, string FilePath, HtmlParseResult Result);
