@@ -340,3 +340,7 @@ MigrationBackup/
 HtmlLog_*/
 result*.html
 
+# Generated data exports
+*.csv
+*.html
+
