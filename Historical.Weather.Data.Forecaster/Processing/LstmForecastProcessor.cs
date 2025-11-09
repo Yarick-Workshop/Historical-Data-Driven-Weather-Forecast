@@ -1,4 +1,7 @@
+using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using TorchSharp;
 using TorchSharp.Modules;
 using static TorchSharp.torch;
@@ -7,25 +10,30 @@ namespace Historical.Weather.Data.Forecaster.Processing;
 
 internal sealed class LstmForecastProcessor : IDisposable
 {
+    private const int BaseFeatureCount = 6;
+
     private readonly ForecastOptions _options;
     private readonly Device _device;
-    private readonly LstmRegressionModel _model;
+    private LstmRegressionModel? _model;
 
     public LstmForecastProcessor(ForecastOptions options)
     {
         _options = options;
         _device = CPU;
-        _model = new LstmRegressionModel(
-            inputSize: 1,
-            hiddenSize: options.HiddenSize,
-            numLayers: 1);
     }
 
     public ForecastResult Process(IReadOnlyList<WeatherObservation> rawObservations)
     {
-        var ordered = rawObservations.OrderBy(o => o.Timestamp).ToList();
-        var splitIndex = DetermineTrainingIndex(ordered.Count, _options.WindowSize, _options.TrainingFraction);
+        var ordered = rawObservations
+            .OrderBy(o => o.Timestamp)
+            .ToList();
 
+        if (ordered.Count == 0)
+        {
+            return CreateEmptyResult(ordered, 0, 0, "no observations found.");
+        }
+
+        var splitIndex = DetermineTrainingIndex(ordered.Count, _options.WindowSize, _options.TrainingFraction);
         var trainingRows = ordered.Take(splitIndex).ToList();
         var validationRows = ordered.Skip(splitIndex).ToList();
 
@@ -40,8 +48,9 @@ internal sealed class LstmForecastProcessor : IDisposable
         }
 
         var statistics = ComputeStatistics(trainingRows);
-        var trainingSequences = BuildSequences(trainingRows, statistics);
+        EnsureModel(statistics.FeatureCount);
 
+        var trainingSequences = BuildSequences(trainingRows, statistics);
         if (trainingSequences.Count == 0)
         {
             return CreateEmptyResult(ordered, trainingRows.Count, validationRows.Count, "unable to build training sequences within the configured window.");
@@ -118,9 +127,23 @@ internal sealed class LstmForecastProcessor : IDisposable
             NextPrediction: null);
     }
 
+    private void EnsureModel(int featureCount)
+    {
+        _model?.Dispose();
+        _model = new LstmRegressionModel(featureCount, _options.HiddenSize, 1);
+    }
+
     private void TrainModel(List<SequenceSample> trainingSequences, NormalizationStatistics stats)
     {
-        var inputs = torch.zeros(new long[] { trainingSequences.Count, _options.WindowSize, 1 }, ScalarType.Float32);
+        if (_model is null)
+        {
+            throw new InvalidOperationException("Model has not been initialized.");
+        }
+
+        var featureCount = stats.FeatureCount;
+        var sequenceLength = trainingSequences[0].Sequence.Length;
+
+        var inputs = torch.zeros(new long[] { trainingSequences.Count, sequenceLength, featureCount }, ScalarType.Float32);
         var targets = torch.zeros(new long[] { trainingSequences.Count, 1 }, ScalarType.Float32);
 
         for (var i = 0; i < trainingSequences.Count; i++)
@@ -128,7 +151,11 @@ internal sealed class LstmForecastProcessor : IDisposable
             var sample = trainingSequences[i];
             for (var t = 0; t < sample.Sequence.Length; t++)
             {
-                inputs[i, t, 0] = (float)sample.Sequence[t];
+                var timestep = sample.Sequence[t];
+                for (var f = 0; f < featureCount; f++)
+                {
+                    inputs[i, t, f] = (float)timestep[f];
+                }
             }
 
             targets[i, 0] = (float)sample.Target;
@@ -201,47 +228,63 @@ internal sealed class LstmForecastProcessor : IDisposable
 
     private double Predict(IReadOnlyList<WeatherObservation> context, NormalizationStatistics stats)
     {
-        var sequence = NormalizeSequence(context, stats);
-
-        using var input = torch.zeros(new long[] { 1, _options.WindowSize, 1 }, ScalarType.Float32, device: _device);
-        for (var t = 0; t < sequence.Length; t++)
+        if (_model is null)
         {
-            input[0, t, 0] = (float)sequence[t];
+            throw new InvalidOperationException("Model has not been initialized.");
+        }
+
+        var normalizedSequence = NormalizeSequence(context, stats);
+        var featureCount = stats.FeatureCount;
+
+        using var input = torch.zeros(new long[] { 1, normalizedSequence.Length, featureCount }, ScalarType.Float32, device: _device);
+        for (var t = 0; t < normalizedSequence.Length; t++)
+        {
+            var timestep = normalizedSequence[t];
+            for (var f = 0; f < featureCount; f++)
+            {
+                input[0, t, f] = (float)timestep[f];
+            }
         }
 
         using var noGrad = no_grad();
         using var output = _model.Forward(input);
         var normalized = output.cpu()[0].ToDouble();
-        return Denormalize(normalized, stats);
+        return DenormalizeTarget(normalized, stats);
     }
 
     private List<SequenceSample> BuildSequences(IReadOnlyList<WeatherObservation> rows, NormalizationStatistics stats)
     {
         var sequences = new List<SequenceSample>();
+        var history = new List<WeatherObservation>();
 
-        for (var idx = _options.WindowSize; idx < rows.Count; idx++)
+        foreach (var observation in rows)
         {
-            var target = rows[idx];
-            if (!TrySelectContext(rows.Take(idx).ToList(), target.Timestamp, out var context))
+            if (!TrySelectContext(history, observation.Timestamp, out var context))
             {
+                history.Add(observation);
                 continue;
             }
 
-            if (context.Count != _options.WindowSize)
+            if (context.Count == 0)
             {
+                history.Add(observation);
                 continue;
             }
 
             var normalizedSequence = NormalizeSequence(context, stats);
-            var normalizedTarget = Normalize(target.Temperature, stats);
+            var normalizedTarget = NormalizeTarget(observation.Temperature, stats);
 
             sequences.Add(new SequenceSample(normalizedSequence, normalizedTarget));
+            history.Add(observation);
         }
 
         return sequences;
     }
 
-    private bool TrySelectContext(IReadOnlyList<WeatherObservation> history, DateTime targetTimestamp, [NotNullWhen(true)] out List<WeatherObservation>? context)
+    private bool TrySelectContext(
+        IReadOnlyList<WeatherObservation> history,
+        DateTime targetTimestamp,
+        [NotNullWhen(true)] out List<WeatherObservation>? context)
     {
         if (history.Count < _options.WindowSize)
         {
@@ -260,7 +303,10 @@ internal sealed class LstmForecastProcessor : IDisposable
             return false;
         }
 
-        var candidate = filtered.Take(_options.WindowSize).OrderBy(obs => obs.Timestamp).ToList();
+        var candidate = filtered
+            .Take(_options.WindowSize)
+            .OrderBy(obs => obs.Timestamp)
+            .ToList();
 
         if (candidate[^1].Timestamp - candidate[0].Timestamp <= _options.WindowDuration || _options.AllowFallbackOutsideWindow)
         {
@@ -274,33 +320,93 @@ internal sealed class LstmForecastProcessor : IDisposable
 
     private static NormalizationStatistics ComputeStatistics(IReadOnlyList<WeatherObservation> trainingRows)
     {
-        var temperatures = trainingRows.Select(o => o.Temperature).ToArray();
-        var mean = temperatures.Average();
-        var variance = temperatures.Select(t => Math.Pow(t - mean, 2)).Average();
-        var std = Math.Sqrt(Math.Max(variance, 1e-6));
+        var featureCount = trainingRows[0].FeatureVector.Length;
+        var featureSums = new double[featureCount];
+        var featureSquares = new double[featureCount];
+        double targetSum = 0d;
+        double targetSquares = 0d;
 
-        return new NormalizationStatistics(mean, std);
-    }
-
-    private double[] NormalizeSequence(IReadOnlyList<WeatherObservation> context, NormalizationStatistics stats)
-    {
-        var sequence = new double[context.Count];
-        for (var i = 0; i < context.Count; i++)
+        foreach (var row in trainingRows)
         {
-            sequence[i] = Normalize(context[i].Temperature, stats);
+            var features = row.FeatureVector;
+            for (var i = 0; i < featureCount; i++)
+            {
+                var value = features[i];
+                if (i < BaseFeatureCount)
+                {
+                    featureSums[i] += value;
+                    featureSquares[i] += value * value;
+                }
+            }
+
+            targetSum += row.Temperature;
+            targetSquares += row.Temperature * row.Temperature;
         }
 
-        return sequence;
+        var sampleCount = trainingRows.Count;
+        var featureMeans = new double[featureCount];
+        var featureStd = new double[featureCount];
+
+        for (var i = 0; i < featureCount; i++)
+        {
+            if (i < BaseFeatureCount)
+            {
+                var mean = featureSums[i] / sampleCount;
+                var variance = featureSquares[i] / sampleCount - mean * mean;
+                featureMeans[i] = mean;
+                featureStd[i] = Math.Sqrt(Math.Max(variance, 1e-6));
+            }
+            else
+            {
+                featureMeans[i] = 0d;
+                featureStd[i] = 1d;
+            }
+        }
+
+        var targetMean = targetSum / sampleCount;
+        var targetVariance = targetSquares / sampleCount - targetMean * targetMean;
+        var targetStd = Math.Sqrt(Math.Max(targetVariance, 1e-6));
+
+        return new NormalizationStatistics(featureMeans, featureStd, targetMean, targetStd, BaseFeatureCount);
     }
 
-    private static double Normalize(double value, NormalizationStatistics stats)
+    private double[][] NormalizeSequence(IReadOnlyList<WeatherObservation> context, NormalizationStatistics stats)
     {
-        return (value - stats.Mean) / stats.StandardDeviation;
+        var result = new double[context.Count][];
+        for (var i = 0; i < context.Count; i++)
+        {
+            result[i] = NormalizeFeatureVector(context[i].FeatureVector, stats);
+        }
+
+        return result;
     }
 
-    private static double Denormalize(double value, NormalizationStatistics stats)
+    private double[] NormalizeFeatureVector(double[] features, NormalizationStatistics stats)
     {
-        return value * stats.StandardDeviation + stats.Mean;
+        var normalized = new double[stats.FeatureCount];
+        for (var i = 0; i < stats.FeatureCount; i++)
+        {
+            if (i < stats.BaseFeatureCount)
+            {
+                normalized[i] = (features[i] - stats.FeatureMeans[i]) / stats.FeatureStandardDeviations[i];
+            }
+            else
+            {
+                normalized[i] = features[i];
+            }
+        }
+
+        return normalized;
+    }
+
+    private double NormalizeTarget(double value, NormalizationStatistics stats)
+    {
+        return (value - stats.TargetMean) / stats.TargetStandardDeviation;
+    }
+
+    private double DenormalizeTarget(double value, NormalizationStatistics stats)
+    {
+        return value * stats.TargetStandardDeviation + stats.TargetMean;
     }
 
     private static TimeSpan EstimateTypicalInterval(IReadOnlyList<WeatherObservation> history)
@@ -352,7 +458,7 @@ internal sealed class LstmForecastProcessor : IDisposable
 
     public void Dispose()
     {
-        _model.Dispose();
+        _model?.Dispose();
     }
 
     private sealed class LstmRegressionModel : IDisposable
@@ -394,9 +500,16 @@ internal sealed class LstmForecastProcessor : IDisposable
         }
     }
 
-    private sealed record SequenceSample(double[] Sequence, double Target);
+    private sealed record SequenceSample(double[][] Sequence, double Target);
 
-    private sealed record NormalizationStatistics(double Mean, double StandardDeviation);
+    private sealed record NormalizationStatistics(
+        double[] FeatureMeans,
+        double[] FeatureStandardDeviations,
+        double TargetMean,
+        double TargetStandardDeviation,
+        int BaseFeatureCount)
+    {
+        public int FeatureCount => FeatureMeans.Length;
+    }
 }
-
 
