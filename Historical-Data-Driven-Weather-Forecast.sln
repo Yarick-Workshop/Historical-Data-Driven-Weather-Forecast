@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HtmlLogWriter", "HtmlLogWri
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Historical.Weather.Data.Miner", "Historical.Weather.Data.Miner\Historical.Weather.Data.Miner.csproj", "{F25D03C9-D0B5-4E20-9ED4-7934C9D72278}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Historical.Weather.Data.Forecaster", "Historical.Weather.Data.Forecaster\Historical.Weather.Data.Forecaster.csproj", "{E7310E5D-5B12-4AB4-B4D0-8E5D524CE8BB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -24,5 +26,9 @@ Global
 		{F25D03C9-D0B5-4E20-9ED4-7934C9D72278}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F25D03C9-D0B5-4E20-9ED4-7934C9D72278}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F25D03C9-D0B5-4E20-9ED4-7934C9D72278}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E7310E5D-5B12-4AB4-B4D0-8E5D524CE8BB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E7310E5D-5B12-4AB4-B4D0-8E5D524CE8BB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E7310E5D-5B12-4AB4-B4D0-8E5D524CE8BB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E7310E5D-5B12-4AB4-B4D0-8E5D524CE8BB}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
