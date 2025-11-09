@@ -169,6 +169,8 @@ internal sealed class LstmForecastProcessor : IDisposable
         var random = new Random(42);
         var indices = Enumerable.Range(0, trainingSequences.Count).ToArray();
 
+        Console.WriteLine($"  [LSTM] Training {trainingSequences.Count} sequence(s) with {featureCount} feature(s) each, batch size {_options.BatchSize}, epochs {_options.TrainingEpochs}.");
+
         for (var epoch = 1; epoch <= _options.TrainingEpochs; epoch++)
         {
             Shuffle(indices, random);
@@ -199,10 +201,14 @@ internal sealed class LstmForecastProcessor : IDisposable
                 batchCount++;
             }
 
-            if (batchCount > 0 && (epoch == 1 || epoch == _options.TrainingEpochs || epoch % 10 == 0))
+            if (batchCount > 0)
             {
                 var avgLoss = totalLoss / batchCount;
-                Console.WriteLine($"  [LSTM] Epoch {epoch}/{_options.TrainingEpochs}, Loss={avgLoss:F4}");
+                Console.WriteLine($"  [LSTM] Epoch {epoch}/{_options.TrainingEpochs}, Batches={batchCount}, AvgLoss={avgLoss:F4}");
+            }
+            else
+            {
+                Console.WriteLine($"  [LSTM] Epoch {epoch}/{_options.TrainingEpochs}, no batches processed.");
             }
         }
     }

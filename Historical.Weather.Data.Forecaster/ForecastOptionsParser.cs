@@ -4,14 +4,6 @@ namespace Historical.Weather.Data.Forecaster;
 
 internal static class ForecastOptionsParser
 {
-    private const string DefaultWindowSize = "8";
-    private const string DefaultWindowHours = "36";
-    private const string DefaultTrainingFraction = "0.8";
-    private const string DefaultEpochs = "20";
-    private const string DefaultLearningRate = "0.001";
-    private const string DefaultBatchSize = "64";
-    private const string DefaultHiddenSize = "32";
-
     public static bool TryParse(string[] args, out ForecastOptions options, out List<string> errors)
     {
         options = null!;
@@ -54,15 +46,15 @@ internal static class ForecastOptionsParser
             values[token] = value;
         }
 
-        var windowSize = ParseInt(values, "--window-size", DefaultWindowSize, minValue: 1, errors);
-        var windowHours = ParseDouble(values, "--window-hours", DefaultWindowHours, minValue: 0.01, maxValue: null, errors);
-        var trainingFraction = ParseDouble(values, "--train-ratio", DefaultTrainingFraction, minValue: 0.1, maxValue: 0.95, errors);
-        var epochs = ParseInt(values, "--epochs", DefaultEpochs, minValue: 1, errors);
-        var batchSize = ParseInt(values, "--batch-size", DefaultBatchSize, minValue: 1, errors);
-        var hiddenSize = ParseInt(values, "--hidden-size", DefaultHiddenSize, minValue: 4, errors);
-        var learningRate = ParseDouble(values, "--learning-rate", DefaultLearningRate, minValue: 0.000001, maxValue: 1.0, errors);
-        var inputPath = ResolveInputPath(values.GetValueOrDefault("--input"));
-        var outputPath = ResolveOutput(values.GetValueOrDefault("--output"));
+        var windowSize = ParseInt(values, "--window-size", errors, minValue: 1);
+        var windowHours = ParseDouble(values, "--window-hours", errors, minValue: 0.01, maxValue: null);
+        var trainingFraction = ParseDouble(values, "--train-ratio", errors, minValue: 0.1, maxValue: 0.95);
+        var epochs = ParseInt(values, "--epochs", errors, minValue: 1);
+        var batchSize = ParseInt(values, "--batch-size", errors, minValue: 1);
+        var hiddenSize = ParseInt(values, "--hidden-size", errors, minValue: 4);
+        var learningRate = ParseDouble(values, "--learning-rate", errors, minValue: 0.000001, maxValue: 1.0);
+        var inputPath = ResolveInputPath(values.GetValueOrDefault("--input"), errors);
+        var outputPath = ResolveOutput(values.GetValueOrDefault("--output"), errors);
 
         var allowFallback = !flags.Contains("--strict-window");
 
@@ -71,14 +63,14 @@ internal static class ForecastOptionsParser
             errors.Add("Input directory with CSV files was not found. Provide --input <path> or ensure the default miner output exists.");
         }
 
-        if (windowSize is null
+        if (errors.Count > 0
+            || windowSize is null
             || windowHours is null
             || trainingFraction is null
             || epochs is null
             || batchSize is null
             || hiddenSize is null
-            || learningRate is null
-            || errors.Count > 0)
+            || learningRate is null)
         {
             options = null!;
             return false;
@@ -107,13 +99,13 @@ internal static class ForecastOptionsParser
         Console.WriteLine();
         Console.WriteLine("Options:");
         Console.WriteLine("  --input <path>        Path to a CSV file or directory with CSV files. Defaults to miner output directory if found.");
-        Console.WriteLine($"  --window-size <int>   Number of previous observations to use (default: {DefaultWindowSize}).");
-        Console.WriteLine($"  --window-hours <num>  Size of the sliding time window in hours (default: {DefaultWindowHours}).");
-        Console.WriteLine($"  --train-ratio <num>   Fraction of rows used for training (default: {DefaultTrainingFraction}).");
-        Console.WriteLine($"  --epochs <int>        Training epochs for the neural model (default: {DefaultEpochs}).");
-        Console.WriteLine($"  --learning-rate <num> Learning rate for the neural model (default: {DefaultLearningRate}).");
-        Console.WriteLine($"  --batch-size <int>    Mini-batch size for the neural model (default: {DefaultBatchSize}).");
-        Console.WriteLine($"  --hidden-size <int>   Hidden units inside the LSTM cell (default: {DefaultHiddenSize}).");
+        Console.WriteLine("  --window-size <int>   Number of previous observations to use (required).");
+        Console.WriteLine("  --window-hours <num>  Size of the sliding time window in hours (required).");
+        Console.WriteLine("  --train-ratio <num>   Fraction of rows used for training (required).");
+        Console.WriteLine("  --epochs <int>        Training epochs for the neural model (required).");
+        Console.WriteLine("  --learning-rate <num> Learning rate for the neural model (required).");
+        Console.WriteLine("  --batch-size <int>    Mini-batch size for the neural model (required).");
+        Console.WriteLine("  --hidden-size <int>   Hidden units inside the LSTM cell (required).");
         Console.WriteLine("  --output <path>       Optional directory for forecast output CSV files.");
         Console.WriteLine("  --strict-window       Disable fallback to outside-window observations when gaps exist.");
         Console.WriteLine("  --help                Show this message.");
@@ -134,11 +126,15 @@ internal static class ForecastOptionsParser
     private static int? ParseInt(
         IReadOnlyDictionary<string, string> values,
         string key,
-        string defaultValue,
-        int? minValue,
-        ICollection<string> errors)
+        ICollection<string> errors,
+        int? minValue = null,
+        int? maxValue = null)
     {
-        var value = values.GetValueOrDefault(key) ?? defaultValue;
+        if (!values.TryGetValue(key, out var value))
+        {
+            errors.Add($"Missing required option {key}.");
+            return null;
+        }
 
         if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
         {
@@ -152,18 +148,27 @@ internal static class ForecastOptionsParser
             return null;
         }
 
+        if (maxValue is not null && parsed > maxValue.Value)
+        {
+            errors.Add($"{key} must be <= {maxValue}.");
+            return null;
+        }
+
         return parsed;
     }
 
     private static double? ParseDouble(
         IReadOnlyDictionary<string, string> values,
         string key,
-        string defaultValue,
-        double? minValue,
-        double? maxValue,
-        ICollection<string> errors)
+        ICollection<string> errors,
+        double? minValue = null,
+        double? maxValue = null)
     {
-        var value = values.GetValueOrDefault(key) ?? defaultValue;
+        if (!values.TryGetValue(key, out var value))
+        {
+            errors.Add($"Missing required option {key}.");
+            return null;
+        }
 
         if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
         {
@@ -186,7 +191,7 @@ internal static class ForecastOptionsParser
         return parsed;
     }
 
-    private static string? ResolveInputPath(string? requested)
+    private static string? ResolveInputPath(string? requested, ICollection<string> errors)
     {
         if (!string.IsNullOrWhiteSpace(requested))
         {
@@ -196,6 +201,7 @@ internal static class ForecastOptionsParser
                 return full;
             }
 
+            errors.Add($"Input path '{requested}' does not exist.");
             return null;
         }
 
@@ -203,14 +209,21 @@ internal static class ForecastOptionsParser
         var solutionDir = Directory.GetParent(projectDir)?.FullName;
         if (solutionDir == null)
         {
+            errors.Add("Unable to determine solution directory to resolve default input path.");
             return null;
         }
 
         var defaultDir = Path.Combine(solutionDir, "Historical.Weather.Data.Miner", "output");
-        return Directory.Exists(defaultDir) ? defaultDir : null;
+        if (!Directory.Exists(defaultDir))
+        {
+            errors.Add("Default miner output directory not found. Specify --input explicitly.");
+            return null;
+        }
+
+        return defaultDir;
     }
 
-    private static string? ResolveOutput(string? requested)
+    private static string? ResolveOutput(string? requested, ICollection<string> errors)
     {
         if (string.IsNullOrWhiteSpace(requested))
         {
@@ -218,7 +231,16 @@ internal static class ForecastOptionsParser
         }
 
         var full = Path.GetFullPath(requested);
-        Directory.CreateDirectory(full);
+        try
+        {
+            Directory.CreateDirectory(full);
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"Failed to create output directory '{requested}': {ex.Message}");
+            return null;
+        }
+
         return full;
     }
 }
