@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Historical.Weather.Data.Forecaster.IO;
 using Historical.Weather.Data.Forecaster.Processing;
 using Serilog;
@@ -19,6 +20,7 @@ internal sealed class ForecastRunner
 
     public async Task RunAsync()
     {
+        var totalStopwatch = Stopwatch.StartNew();
         var csvPaths = ResolveCsvPaths(_options.InputPath).ToList();
 
         if (csvPaths.Count == 0)
@@ -31,6 +33,7 @@ internal sealed class ForecastRunner
 
         foreach (var csvPath in csvPaths)
         {
+            var fileStopwatch = Stopwatch.StartNew();
             Log.Information("================================================");
             Log.Information("Processing: {CsvPath}", csvPath);
 
@@ -47,7 +50,15 @@ internal sealed class ForecastRunner
             using var processor = new LstmForecastProcessor(_options);
             var result = processor.Process(observations);
             await _reportWriter.WriteAsync(csvPath, result);
+
+            fileStopwatch.Stop();
+            Log.Information("Completed processing {CsvPath} in {ElapsedSeconds:F2} seconds.",
+                csvPath,
+                fileStopwatch.Elapsed.TotalSeconds);
         }
+
+        totalStopwatch.Stop();
+        Log.Information("Completed forecast run in {ElapsedSeconds:F2} seconds.", totalStopwatch.Elapsed.TotalSeconds);
     }
 
     private static IEnumerable<string> ResolveCsvPaths(string inputPath)

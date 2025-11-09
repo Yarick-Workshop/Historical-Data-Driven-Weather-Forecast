@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using Serilog;
@@ -25,6 +26,8 @@ internal sealed class LstmForecastProcessor : IDisposable
 
     public ForecastResult Process(IReadOnlyList<WeatherObservation> rawObservations)
     {
+        var totalStopwatch = Stopwatch.StartNew();
+
         var ordered = rawObservations
             .OrderBy(o => o.Timestamp)
             .ToList();
@@ -51,14 +54,23 @@ internal sealed class LstmForecastProcessor : IDisposable
         var statistics = ComputeStatistics(trainingRows);
         EnsureModel(statistics.FeatureCount);
 
+        var sequenceStopwatch = Stopwatch.StartNew();
         var trainingSequences = BuildSequences(trainingRows, statistics);
+        sequenceStopwatch.Stop();
+        Log.Debug("  [LSTM] Built {SequenceCount} training sequence(s) in {ElapsedSeconds:F2} seconds.",
+            trainingSequences.Count,
+            sequenceStopwatch.Elapsed.TotalSeconds);
         if (trainingSequences.Count == 0)
         {
             return CreateEmptyResult(ordered, trainingRows.Count, validationRows.Count, "unable to build training sequences within the configured window.");
         }
 
+        var trainingStopwatch = Stopwatch.StartNew();
         TrainModel(trainingSequences, statistics);
+        trainingStopwatch.Stop();
+        Log.Information("  [LSTM] Training completed in {ElapsedSeconds:F2} seconds.", trainingStopwatch.Elapsed.TotalSeconds);
 
+        var evaluationStopwatch = Stopwatch.StartNew();
         var evaluationSeries = new List<ForecastEvaluationPoint>();
         var absoluteErrors = new List<double>();
         var squaredErrors = new List<double>();
@@ -99,6 +111,12 @@ internal sealed class LstmForecastProcessor : IDisposable
         }
 
         var nextPrediction = TryForecastNext(ordered, statistics);
+        evaluationStopwatch.Stop();
+        Log.Information("  [LSTM] Evaluation (validation + forecasting) completed in {ElapsedSeconds:F2} seconds.",
+            evaluationStopwatch.Elapsed.TotalSeconds);
+
+        totalStopwatch.Stop();
+        Log.Information("  [LSTM] Dataset processing time: {ElapsedSeconds:F2} seconds.", totalStopwatch.Elapsed.TotalSeconds);
 
         return new ForecastResult(
             Place: ordered[0].Place,
