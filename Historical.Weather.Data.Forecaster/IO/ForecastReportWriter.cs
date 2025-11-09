@@ -1,5 +1,6 @@
 using System.Globalization;
 using Historical.Weather.Data.Forecaster.Processing;
+using Serilog;
 
 namespace Historical.Weather.Data.Forecaster.IO;
 
@@ -26,38 +27,38 @@ internal sealed class ForecastReportWriter
 
     private static void WriteConsoleReport(string csvPath, ForecastResult result)
     {
-        Console.WriteLine($"  Place:               {result.Place}");
-        Console.WriteLine($"  Total rows:          {result.TotalRecords}");
-        Console.WriteLine($"  Training rows:       {result.TrainingRecords}");
-        Console.WriteLine($"  Validation rows:     {result.ValidationRecords}");
+        Log.Information("  Place:               {Place}", result.Place);
+        Log.Information("  Total rows:          {TotalRecords}", result.TotalRecords);
+        Log.Information("  Training rows:       {TrainingRecords}", result.TrainingRecords);
+        Log.Information("  Validation rows:     {ValidationRecords}", result.ValidationRecords);
 
         if (result.Metrics is null)
         {
-            Console.WriteLine("  Accuracy:            insufficient validation rows to compute metrics.");
+            Log.Warning("  Accuracy:            insufficient validation rows to compute metrics.");
         }
         else
         {
-            Console.WriteLine($"  MAE:                 {result.Metrics.MeanAbsoluteError:F2}°C");
-            Console.WriteLine($"  RMSE:                {result.Metrics.RootMeanSquareError:F2}°C");
+            Log.Information("  MAE:                 {MAE:F2}°C", result.Metrics.MeanAbsoluteError);
+            Log.Information("  RMSE:                {RMSE:F2}°C", result.Metrics.RootMeanSquareError);
 
             if (result.Metrics.MeanAbsolutePercentageError is { } mape)
             {
-                Console.WriteLine($"  MAPE:                {mape:F2}%");
+                Log.Information("  MAPE:                {MAPE:F2}%", mape);
             }
             else
             {
-                Console.WriteLine("  MAPE:                not available (temperatures near zero).");
+                Log.Information("  MAPE:                not available (temperatures near zero).");
             }
         }
 
         if (result.NextPrediction is null)
         {
-            Console.WriteLine("  Next forecast:       unavailable (insufficient history).");
+            Log.Warning("  Next forecast:       unavailable (insufficient history).");
         }
         else
         {
-            Console.WriteLine($"  Next forecast time:  {result.NextPrediction.Timestamp:yyyy-MM-dd HH:mm}");
-            Console.WriteLine($"  Next temperature:    {result.NextPrediction.Temperature:F2}°C");
+            Log.Information("  Next forecast time:  {Timestamp:yyyy-MM-dd HH:mm}", result.NextPrediction.Timestamp);
+            Log.Information("  Next temperature:    {Temperature:F2}°C", result.NextPrediction.Temperature);
         }
     }
 
@@ -92,7 +93,7 @@ internal sealed class ForecastReportWriter
                 "forecast"));
         }
 
-        Console.WriteLine($"  Forecast CSV:        {outputPath}");
+        Log.Information("  Forecast CSV:        {OutputPath}", outputPath);
     }
 }
 

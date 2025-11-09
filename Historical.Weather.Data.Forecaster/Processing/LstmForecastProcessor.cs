@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using Serilog;
 using TorchSharp;
 using TorchSharp.Modules;
 using static TorchSharp.torch;
@@ -115,7 +116,7 @@ internal sealed class LstmForecastProcessor : IDisposable
         int validationCount,
         string reason)
     {
-        Console.WriteLine($"  Warning: {reason}");
+        Log.Warning("  {Reason}", reason);
 
         return new ForecastResult(
             Place: ordered.Count > 0 ? ordered[0].Place : string.Empty,
@@ -169,7 +170,8 @@ internal sealed class LstmForecastProcessor : IDisposable
         var random = new Random(42);
         var indices = Enumerable.Range(0, trainingSequences.Count).ToArray();
 
-        Console.WriteLine($"  [LSTM] Training {trainingSequences.Count} sequence(s) with {featureCount} feature(s) each, batch size {_options.BatchSize}, epochs {_options.TrainingEpochs}.");
+        Log.Information("  [LSTM] Training {SequenceCount} sequence(s) with {FeatureCount} feature(s) each, batch size {BatchSize}, epochs {Epochs}.",
+            trainingSequences.Count, featureCount, _options.BatchSize, _options.TrainingEpochs);
 
         for (var epoch = 1; epoch <= _options.TrainingEpochs; epoch++)
         {
@@ -204,11 +206,12 @@ internal sealed class LstmForecastProcessor : IDisposable
             if (batchCount > 0)
             {
                 var avgLoss = totalLoss / batchCount;
-                Console.WriteLine($"  [LSTM] Epoch {epoch}/{_options.TrainingEpochs}, Batches={batchCount}, AvgLoss={avgLoss:F4}");
+                Log.Information("  [LSTM] Epoch {Epoch}/{TotalEpochs}, Batches={BatchCount}, AvgLoss={AverageLoss:F4}",
+                    epoch, _options.TrainingEpochs, batchCount, avgLoss);
             }
             else
             {
-                Console.WriteLine($"  [LSTM] Epoch {epoch}/{_options.TrainingEpochs}, no batches processed.");
+                Log.Warning("  [LSTM] Epoch {Epoch}/{TotalEpochs}, no batches processed.", epoch, _options.TrainingEpochs);
             }
         }
     }
@@ -262,9 +265,24 @@ internal sealed class LstmForecastProcessor : IDisposable
     {
         var sequences = new List<SequenceSample>();
         var history = new List<WeatherObservation>();
+        var distinctDayCount = 0;
+        DateTime? lastLoggedDay = null;
 
         foreach (var observation in rows)
         {
+            var day = observation.Timestamp.Date;
+            if (lastLoggedDay != day)
+            {
+                lastLoggedDay = day;
+                distinctDayCount++;
+
+                if (distinctDayCount % 100 == 0)
+                {
+                    Log.Debug("  [LSTM] Training progress: processed {DayCount} day(s); current day {Date}",
+                        distinctDayCount, day);
+                }
+            }
+
             if (!TrySelectContext(history, observation.Timestamp, out var context))
             {
                 history.Add(observation);
@@ -283,6 +301,8 @@ internal sealed class LstmForecastProcessor : IDisposable
             sequences.Add(new SequenceSample(normalizedSequence, normalizedTarget));
             history.Add(observation);
         }
+
+        Log.Information("  [LSTM] Training set covers {TotalDays} distinct day(s).", distinctDayCount);
 
         return sequences;
     }

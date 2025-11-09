@@ -1,5 +1,6 @@
 using Historical.Weather.Data.Forecaster.IO;
 using Historical.Weather.Data.Forecaster.Processing;
+using Serilog;
 
 namespace Historical.Weather.Data.Forecaster;
 
@@ -22,25 +23,26 @@ internal sealed class ForecastRunner
 
         if (csvPaths.Count == 0)
         {
-            Console.WriteLine("No CSV files were found to process.");
+            Log.Warning("No CSV files were found to process.");
             return;
         }
 
-        Console.WriteLine($"Discovered {csvPaths.Count} CSV file(s).");
+        Log.Information("Discovered {CsvCount} CSV file(s).", csvPaths.Count);
 
         foreach (var csvPath in csvPaths)
         {
-            Console.WriteLine();
-            Console.WriteLine("================================================");
-            Console.WriteLine($"Processing: {csvPath}");
+            Log.Information("================================================");
+            Log.Information("Processing: {CsvPath}", csvPath);
 
-            var observations = await _loader.LoadAsync(csvPath);
+            var observations = (await _loader.LoadAsync(csvPath)).ToList();
 
             if (observations.Count == 0)
             {
-                Console.WriteLine("  Skipped: file contains no observations.");
+                Log.Warning("  Skipped: file contains no observations.");
                 continue;
             }
+
+            LogDayProgress(observations);
 
             using var processor = new LstmForecastProcessor(_options);
             var result = processor.Process(observations);
@@ -65,6 +67,37 @@ internal sealed class ForecastRunner
         {
             yield return file;
         }
+    }
+
+    private static void LogDayProgress(IReadOnlyList<WeatherObservation> observations)
+    {
+        if (observations.Count == 0)
+        {
+            return;
+        }
+
+        var ordered = observations
+            .OrderBy(o => o.Timestamp)
+            .ToList();
+
+        var distinctDays = 0;
+        DateTime? currentDay = null;
+        foreach (var observation in ordered)
+        {
+            var date = observation.Timestamp.Date;
+            if (currentDay != date)
+            {
+                currentDay = date;
+                distinctDays++;
+
+                if (distinctDays % 10 == 0)
+                {
+                    Log.Information("  Progress: processed {DayCount} day(s); current day {Date}", distinctDays, date);
+                }
+            }
+        }
+
+        Log.Information("  Total distinct days in file: {TotalDays}", distinctDays);
     }
 }
 

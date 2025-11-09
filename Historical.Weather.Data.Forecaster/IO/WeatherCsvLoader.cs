@@ -1,6 +1,7 @@
 using System.Globalization;
 using CsvHelper;
 using Historical.Weather.Core;
+using Serilog;
 
 namespace Historical.Weather.Data.Forecaster.IO;
 
@@ -93,7 +94,7 @@ internal sealed class WeatherCsvLoader
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"  Warning: unable to parse row {csv.Parser?.RawRow ?? -1}: {ex.Message}");
+                Log.Warning("  Unable to parse row {RowNumber}: {Message}", csv.Parser?.RawRow ?? -1, ex.Message);
             }
         }
 
