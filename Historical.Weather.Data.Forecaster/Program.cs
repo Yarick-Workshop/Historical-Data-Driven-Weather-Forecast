@@ -38,7 +38,7 @@ try
     Log.Information("Epochs: {Epochs}, Batch size: {BatchSize}, Hidden size: {HiddenSize}, Learning rate: {LearningRate}",
         options.TrainingEpochs, options.BatchSize, options.HiddenSize, options.LearningRate);
 
-    var runner = new ForecastRunner(options);
+    var runner = new ForecastRunner(options, logFilePath);
     await runner.RunAsync();
 
     Log.Information("Forecast run finished successfully.");
