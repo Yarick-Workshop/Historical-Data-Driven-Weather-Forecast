@@ -1,5 +1,6 @@
 using System.Globalization;
 using CsvHelper;
+using Historical.Weather.Core;
 
 namespace Historical.Weather.Data.Forecaster.IO;
 
@@ -28,14 +29,14 @@ internal sealed class WeatherCsvLoader
         {
             try
             {
-                var place = csv.GetField("Place");
+                var place = csv.GetField(WeatherCsvColumns.Place);
 
                 if (string.IsNullOrWhiteSpace(place))
                 {
                     continue;
                 }
-                var timestamp = csv.GetField("DateTime");
-                var temperature = csv.GetField("Temperature");
+                var timestamp = csv.GetField(WeatherCsvColumns.DateTime);
+                var temperature = csv.GetField(WeatherCsvColumns.Temperature);
 
                 if (!DateTime.TryParse(timestamp, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var time))
                 {

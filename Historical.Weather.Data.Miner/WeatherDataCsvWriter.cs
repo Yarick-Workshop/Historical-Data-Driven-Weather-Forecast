@@ -1,4 +1,5 @@
 using CsvHelper;
+using Historical.Weather.Core;
 using Serilog;
 using System.Collections.Generic;
 using System.Globalization;
@@ -60,16 +61,7 @@ public static class WeatherDataCsvWriter
     private static CsvHeaderConfiguration PrepareCsvConfigurations(
         SortedDictionary<DateTime, (string FilePath, HtmlParseResult Result)> resultsByDate)
     {
-        var baseHeaders = new List<string>
-        {
-            "Place",
-            "DateTime",
-            "Temperature",
-            "WindDirection",
-            "WindSpeed",
-            "AtmosphericPressure",
-            "Humidity"
-        };
+        var baseHeaders = new List<string>(WeatherCsvColumns.CoreColumns);
 
         var characteristicHeaders = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
 

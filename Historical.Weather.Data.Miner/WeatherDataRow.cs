@@ -1,4 +1,5 @@
 using System;
+using Historical.Weather.Core;
 
 namespace Historical.Weather.Data.Miner;
 

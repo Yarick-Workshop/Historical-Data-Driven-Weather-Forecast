@@ -13,4 +13,8 @@
     <PackageReference Include="TorchSharp-cpu" Version="0.105.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Historical.Weather.Core\Historical.Weather.Core.csproj" />
+  </ItemGroup>
+
 </Project>

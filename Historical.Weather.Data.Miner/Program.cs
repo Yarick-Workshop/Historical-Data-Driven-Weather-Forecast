@@ -1,4 +1,5 @@
-﻿using Historical.Weather.Data.Miner;
+﻿using Historical.Weather.Core;
+using Historical.Weather.Data.Miner;
 using HtmlLogWriter;
 using Microsoft.Extensions.Configuration;
 using Serilog;

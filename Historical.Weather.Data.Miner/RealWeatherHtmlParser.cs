@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Serilog;
 using System.Globalization;
 using System.IO;
+using Historical.Weather.Core;
 
 namespace Historical.Weather.Data.Miner;
 

@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\HtmlLogWriter\HtmlLogWriter.csproj" />
+    <ProjectReference Include="..\Historical.Weather.Core\Historical.Weather.Core.csproj" />
   </ItemGroup>
 
 </Project>
