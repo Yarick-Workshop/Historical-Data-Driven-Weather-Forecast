@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Linq;
 using Historical.Weather.Data.Forecaster.IO;
 using Historical.Weather.Data.Forecaster.Processing;
 using HtmlLogWriter;
@@ -13,6 +14,7 @@ internal sealed class ForecastRunner
     private readonly WeatherCsvLoader _loader;
     private readonly ForecastReportWriter _reportWriter;
     private readonly string _logFilePath;
+    private readonly Dictionary<string, List<WeatherObservation>> _observationsByFile = new(StringComparer.OrdinalIgnoreCase);
 
     public ForecastRunner(ForecastOptions options, string logFilePath)
     {
@@ -34,6 +36,7 @@ internal sealed class ForecastRunner
             return;
         }
 
+        Log.Information("Step 1/2: Training individual models per CSV file.");
         Log.Information("Discovered {CsvCount} CSV file(s).", csvPaths.Count);
 
         foreach (var csvPath in csvPaths)
@@ -51,6 +54,8 @@ internal sealed class ForecastRunner
             }
 
             LogDayProgress(observations);
+            _observationsByFile[csvPath] = observations;
+            _observationsByFile[csvPath] = observations;
 
             using var processor = new LstmForecastProcessor(_options);
             var result = processor.Process(observations);
@@ -67,17 +72,24 @@ internal sealed class ForecastRunner
                 Duration: fileStopwatch.Elapsed));
         }
 
+        var aggregateResult = TrainAggregateModel();
+        var combinedSummaries = summaries.ToList();
+        if (aggregateResult is not null)
+        {
+            combinedSummaries.Add(aggregateResult.Summary);
+        }
+
         totalStopwatch.Stop();
         Log.Information("Completed forecast run in {ElapsedSeconds:F2} seconds.", totalStopwatch.Elapsed.TotalSeconds);
 
-        if (summaries.Count > 0)
+        if (combinedSummaries.Count > 0)
         {
             Log.Information("================================================");
-            Log.Information("Summary of processed files:");
+            Log.Information("Summary of processed models:");
             Log.Information("Place                 | Rows    | Train   | Valid   |  MAE |  RMSE |  MAPE | Next Forecast          | Temp  | Duration (s)");
             Log.Information("---------------------+---------+---------+---------+------+-------+-------+------------------------+-------+-------------");
 
-            foreach (var summary in summaries)
+            foreach (var summary in combinedSummaries)
             {
                 var metrics = summary.Result.Metrics;
                 var mae = metrics?.MeanAbsoluteError.ToString("F2", CultureInfo.InvariantCulture) ?? "-";
@@ -102,7 +114,7 @@ internal sealed class ForecastRunner
 
             Log.Information("Abbreviations: MAE = Mean Absolute Error, RMSE = Root Mean Square Error, MAPE = Mean Absolute Percentage Error.");
 
-            WriteHtmlSummary(summaries);
+            WriteHtmlSummary(combinedSummaries);
         }
     }
 
@@ -146,9 +158,9 @@ internal sealed class ForecastRunner
                 currentDay = date;
                 distinctDays++;
 
-                if (distinctDays % 10 == 0)
+                if (distinctDays % 100 == 0)
                 {
-                    Log.Information("  Progress: processed {DayCount} day(s); current day {Date}", distinctDays, date);
+                    Log.Debug("  Progress: processed {DayCount} day(s); current day {Date}", distinctDays, date);
                 }
             }
         }
@@ -206,7 +218,70 @@ internal sealed class ForecastRunner
         }
     }
 
+    private AggregateTrainingResult? TrainAggregateModel()
+    {
+        if (_observationsByFile.Count == 0)
+        {
+            return null;
+        }
+
+        Log.Information("Step 2/2: Training aggregate model across all CSV files.");
+
+        var aggregateStopwatch = Stopwatch.StartNew();
+        var aggregated = _observationsByFile
+            .SelectMany(pair => pair.Value.Select(obs => (File: pair.Key, Observation: obs)))
+            .OrderBy(entry => entry.Observation.Timestamp)
+            .Select(entry => new WeatherObservation(
+                entry.File,
+                entry.Observation.Timestamp,
+                entry.Observation.Temperature,
+                entry.Observation.FeatureVector.ToArray(),
+                entry.Observation.Characteristics))
+            .ToList();
+
+        if (aggregated.Count <= _options.WindowSize)
+        {
+            Log.Warning("Aggregate training skipped: insufficient observations ({Count}) compared to window size ({Window}).", aggregated.Count, _options.WindowSize);
+            return null;
+        }
+
+        using var processor = new LstmForecastProcessor(_options);
+        var result = processor.Process(aggregated);
+        aggregateStopwatch.Stop();
+
+        Log.Information("Aggregate model trained in {ElapsedSeconds:F2} seconds.", aggregateStopwatch.Elapsed.TotalSeconds);
+
+        if (result.Metrics is null)
+        {
+            Log.Warning("Aggregate metrics unavailable: insufficient validation rows.");
+        }
+        else
+        {
+            Log.Information("Aggregate metrics -> MAE: {MAE:F2}°C, RMSE: {RMSE:F2}°C, MAPE: {MAPE}",
+                result.Metrics.MeanAbsoluteError,
+                result.Metrics.RootMeanSquareError,
+                result.Metrics.MeanAbsolutePercentageError?.ToString("F2", CultureInfo.InvariantCulture) ?? "n/a");
+        }
+
+        if (result.NextPrediction is { } prediction)
+        {
+            Log.Information("Aggregate next forecast at {Timestamp:yyyy-MM-dd HH:mm}, temperature {Temperature:F2}°C",
+                prediction.Timestamp,
+                prediction.Temperature);
+        }
+        else
+        {
+            Log.Warning("Aggregate next forecast unavailable (insufficient history).");
+        }
+
+        return new AggregateTrainingResult(
+            new ForecastSummary("Aggregate", result, aggregateStopwatch.Elapsed),
+            result);
+    }
+
     private sealed record ForecastSummary(string Name, ForecastResult Result, TimeSpan Duration);
+
+    private sealed record AggregateTrainingResult(ForecastSummary Summary, ForecastResult Result);
 
     private sealed record SummaryRow
     {
