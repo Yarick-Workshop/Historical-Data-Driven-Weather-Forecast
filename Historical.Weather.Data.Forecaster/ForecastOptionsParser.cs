@@ -193,34 +193,15 @@ internal static class ForecastOptionsParser
 
     private static string? ResolveInputPath(string? requested, ICollection<string> errors)
     {
-        if (!string.IsNullOrWhiteSpace(requested))
+        
+        var full = Path.GetFullPath(requested);
+        if (Directory.Exists(full) || File.Exists(full))
         {
-            var full = Path.GetFullPath(requested);
-            if (Directory.Exists(full) || File.Exists(full))
-            {
-                return full;
-            }
-
-            errors.Add($"Input path '{requested}' does not exist.");
-            return null;
+            return full;
         }
 
-        var projectDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", ".."));
-        var solutionDir = Directory.GetParent(projectDir)?.FullName;
-        if (solutionDir == null)
-        {
-            errors.Add("Unable to determine solution directory to resolve default input path.");
-            return null;
-        }
-
-        var defaultDir = Path.Combine(solutionDir, "Historical.Weather.Data.Miner", "output");
-        if (!Directory.Exists(defaultDir))
-        {
-            errors.Add("Default miner output directory not found. Specify --input explicitly.");
-            return null;
-        }
-
-        return defaultDir;
+        errors.Add($"Input path '{requested}' does not exist.");
+        return null;
     }
 
     private static string? ResolveOutput(string? requested, ICollection<string> errors)

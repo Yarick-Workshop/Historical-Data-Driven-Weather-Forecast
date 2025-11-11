@@ -57,9 +57,9 @@ internal sealed class LstmForecastProcessor : IDisposable
         var sequenceStopwatch = Stopwatch.StartNew();
         var trainingSequences = BuildSequences(trainingRows, statistics);
         sequenceStopwatch.Stop();
-        Log.Debug("  [LSTM] Built {SequenceCount} training sequence(s) in {ElapsedSeconds:F2} seconds.",
+        Log.Debug("  [LSTM] Built {SequenceCount} training sequence(s) in {Elapsed}.",
             trainingSequences.Count,
-            sequenceStopwatch.Elapsed.TotalSeconds);
+            FormatDuration(sequenceStopwatch.Elapsed));
         if (trainingSequences.Count == 0)
         {
             return CreateEmptyResult(ordered, trainingRows.Count, validationRows.Count, "unable to build training sequences within the configured window.");
@@ -68,7 +68,7 @@ internal sealed class LstmForecastProcessor : IDisposable
         var trainingStopwatch = Stopwatch.StartNew();
         TrainModel(trainingSequences, statistics);
         trainingStopwatch.Stop();
-        Log.Information("  [LSTM] Training completed in {ElapsedSeconds:F2} seconds.", trainingStopwatch.Elapsed.TotalSeconds);
+        Log.Information("  [LSTM] Training completed in {Elapsed}.", FormatDuration(trainingStopwatch.Elapsed));
 
         var evaluationStopwatch = Stopwatch.StartNew();
         var evaluationSeries = new List<ForecastEvaluationPoint>();
@@ -112,11 +112,11 @@ internal sealed class LstmForecastProcessor : IDisposable
 
         var nextPrediction = TryForecastNext(ordered, statistics);
         evaluationStopwatch.Stop();
-        Log.Information("  [LSTM] Evaluation (validation + forecasting) completed in {ElapsedSeconds:F2} seconds.",
-            evaluationStopwatch.Elapsed.TotalSeconds);
+        Log.Information("  [LSTM] Evaluation (validation + forecasting) completed in {Elapsed}.",
+            FormatDuration(evaluationStopwatch.Elapsed));
 
         totalStopwatch.Stop();
-        Log.Information("  [LSTM] Dataset processing time: {ElapsedSeconds:F2} seconds.", totalStopwatch.Elapsed.TotalSeconds);
+        Log.Information("  [LSTM] Dataset processing time: {Elapsed}.", FormatDuration(totalStopwatch.Elapsed));
 
         return new ForecastResult(
             Place: ordered[0].Place,
@@ -277,6 +277,12 @@ internal sealed class LstmForecastProcessor : IDisposable
         using var output = _model.Forward(input);
         var normalized = output.cpu()[0].ToDouble();
         return DenormalizeTarget(normalized, stats);
+    }
+
+    private static string FormatDuration(TimeSpan duration)
+    {
+        var totalHours = (int)duration.TotalHours;
+        return $"{totalHours:D2}:{duration.Minutes:D2}:{duration.Seconds:D2}";
     }
 
     private List<SequenceSample> BuildSequences(IReadOnlyList<WeatherObservation> rows, NormalizationStatistics stats)

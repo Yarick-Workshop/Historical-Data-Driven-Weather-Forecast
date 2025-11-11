@@ -28,6 +28,10 @@ internal sealed class ForecastRunner
     {
         var totalStopwatch = Stopwatch.StartNew();
         var csvPaths = ResolveCsvPaths(_options.InputPath).ToList();
+
+        Console.WriteLine($"In folder: {_options.InputPath} found {csvPaths.Count} CSV files:");
+        Console.WriteLine(string.Join($",{Environment.NewLine}", csvPaths));
+
         var summaries = new List<ForecastSummary>();
 
         if (csvPaths.Count == 0)
@@ -115,6 +119,12 @@ internal sealed class ForecastRunner
 
             WriteHtmlSummary(combinedSummaries);
         }
+    }
+
+    private static string FormatDuration(TimeSpan duration)
+    {
+        var totalHours = (int)duration.TotalHours;
+        return $"{totalHours:D2}:{duration.Minutes:D2}:{duration.Seconds:D2}";
     }
 
     private static IEnumerable<string> ResolveCsvPaths(string inputPath)
@@ -217,7 +227,7 @@ internal sealed class ForecastRunner
         var result = processor.Process(aggregated);
         aggregateStopwatch.Stop();
 
-        Log.Information("Aggregate model trained in {ElapsedSeconds:F2} seconds.", aggregateStopwatch.Elapsed.TotalSeconds);
+        Log.Information("Aggregate model trained in {Elapsed}.", FormatDuration(aggregateStopwatch.Elapsed));
 
         if (result.Metrics is null)
         {
@@ -262,7 +272,7 @@ internal sealed class ForecastRunner
         public string MAPE { get; init; } = "-";
         public string NextForecastTime { get; init; } = "-";
         public string NextTemperature { get; init; } = "-";
-        public string DurationSeconds { get; init; } = "-";
+        public string Duration { get; init; } = "-";
     }
 
     private sealed record AbbreviationRow(string Code, string Meaning);
