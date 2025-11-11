@@ -61,9 +61,9 @@ internal sealed class ForecastRunner
             await _reportWriter.WriteAsync(csvPath, result);
 
             fileStopwatch.Stop();
-            Log.Information("Completed processing {CsvPath} in {ElapsedSeconds:F2} seconds.",
+            Log.Information("Completed processing {CsvPath} in {Elapsed}.",
                 csvPath,
-                fileStopwatch.Elapsed.TotalSeconds);
+                FormatDuration(fileStopwatch.Elapsed));
 
             summaries.Add(new ForecastSummary(
                 Name: Path.GetFileNameWithoutExtension(csvPath),
@@ -79,13 +79,13 @@ internal sealed class ForecastRunner
         }
 
         totalStopwatch.Stop();
-        Log.Information("Completed forecast run in {ElapsedSeconds:F2} seconds.", totalStopwatch.Elapsed.TotalSeconds);
+        Log.Information("Completed forecast run in {Elapsed}.", FormatDuration(totalStopwatch.Elapsed));
 
         if (combinedSummaries.Count > 0)
         {
             Log.Information("================================================");
             Log.Information("Summary of processed models:");
-            Log.Information("Place                 | Rows    | Train   | Valid   |  MAE |  RMSE |  MAPE | Next Forecast          | Temp  | Duration (s)");
+            Log.Information("Place                 | Rows    | Train   | Valid   |  MAE |  RMSE |  MAPE | Next Forecast          | Temp  | Duration");
             Log.Information("---------------------+---------+---------+---------+------+-------+-------+------------------------+-------+-------------");
 
             foreach (var summary in combinedSummaries)
@@ -96,7 +96,7 @@ internal sealed class ForecastRunner
                 var mape = metrics?.MeanAbsolutePercentageError?.ToString("F2", CultureInfo.InvariantCulture) ?? "-";
                 var nextTime = summary.Result.NextPrediction?.Timestamp.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) ?? "-";
                 var nextTemp = summary.Result.NextPrediction?.Temperature.ToString("F2", CultureInfo.InvariantCulture) ?? "-";
-                var duration = summary.Duration.TotalSeconds.ToString("F2", CultureInfo.InvariantCulture);
+                var duration = FormatDuration(summary.Duration);
 
                 Log.Information("{Place,-21}| {Total,7} | {Train,7} | {Valid,7} | {MAE,5} | {RMSE,5} | {MAPE,5} | {NextTime,-22} | {NextTemp,5} | {Duration,11}",
                     summary.Name.Length > 21 ? summary.Name[..21] : summary.Name,
@@ -165,7 +165,7 @@ internal sealed class ForecastRunner
                     MAPE = mape?.ToString("F2", CultureInfo.InvariantCulture) ?? "-",
                     NextForecastTime = s.Result.NextPrediction?.Timestamp.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) ?? "-",
                     NextTemperature = s.Result.NextPrediction?.Temperature.ToString("F2", CultureInfo.InvariantCulture) ?? "-",
-                    DurationSeconds = s.Duration.TotalSeconds.ToString("F2", CultureInfo.InvariantCulture)
+                    Duration = FormatDuration(s.Duration)
                 };
             }).ToList();
 
