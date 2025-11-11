@@ -53,7 +53,6 @@ internal sealed class ForecastRunner
                 continue;
             }
 
-            LogDayProgress(observations);
             _observationsByFile[csvPath] = observations;
             _observationsByFile[csvPath] = observations;
 
@@ -131,41 +130,10 @@ internal sealed class ForecastRunner
             yield break;
         }
 
-        foreach (var file in Directory.EnumerateFiles(inputPath, "*.csv", SearchOption.TopDirectoryOnly).OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+        foreach (var file in Directory.EnumerateFiles(inputPath, "*.csv", SearchOption.TopDirectoryOnly).Order())
         {
             yield return file;
         }
-    }
-
-    private static void LogDayProgress(IReadOnlyList<WeatherObservation> observations)
-    {
-        if (observations.Count == 0)
-        {
-            return;
-        }
-
-        var ordered = observations
-            .OrderBy(o => o.Timestamp)
-            .ToList();
-
-        var distinctDays = 0;
-        DateTime? currentDay = null;
-        foreach (var observation in ordered)
-        {
-            var date = observation.Timestamp.Date;
-            if (currentDay != date)
-            {
-                currentDay = date;
-                distinctDays++;
-
-                if (distinctDays % 100 == 0)
-                {
-                    Log.Debug("  Progress: processed {DayCount} day(s); current day {Date}", distinctDays, date);
-                }
-            }
-        }
-
-        Log.Information("  Total distinct days in file: {TotalDays}", distinctDays);
     }
 
     private void WriteHtmlSummary(IReadOnlyList<ForecastSummary> summaries)
