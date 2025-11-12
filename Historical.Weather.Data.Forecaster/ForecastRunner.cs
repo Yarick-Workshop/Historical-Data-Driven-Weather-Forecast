@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
@@ -32,8 +33,6 @@ internal sealed class ForecastRunner
         Console.WriteLine($"In folder: {_options.InputPath} found {csvPaths.Count} CSV files:");
         Console.WriteLine(string.Join($",{Environment.NewLine}", csvPaths));
 
-        var summaries = new List<ForecastSummary>();
-
         if (csvPaths.Count == 0)
         {
             Log.Warning("No CSV files were found to process.");
@@ -43,37 +42,7 @@ internal sealed class ForecastRunner
         Log.Information("Step 1/2: Training individual models per CSV file.");
         Log.Information("Discovered {CsvCount} CSV file(s).", csvPaths.Count);
 
-        foreach (var csvPath in csvPaths)
-        {
-            var fileStopwatch = Stopwatch.StartNew();
-            Log.Information("================================================");
-            Log.Information("Processing: {CsvPath}", csvPath);
-
-            var observations = (await _loader.LoadAsync(csvPath)).ToList();
-
-            if (observations.Count == 0)
-            {
-                Log.Warning("  Skipped: file contains no observations.");
-                continue;
-            }
-
-            _observationsByFile[csvPath] = observations;
-            _observationsByFile[csvPath] = observations;
-
-            using var processor = new LstmForecastProcessor(_options);
-            var result = processor.Process(observations);
-            await _reportWriter.WriteAsync(csvPath, result);
-
-            fileStopwatch.Stop();
-            Log.Information("Completed processing {CsvPath} in {Elapsed}.",
-                csvPath,
-                FormatDuration(fileStopwatch.Elapsed));
-
-            summaries.Add(new ForecastSummary(
-                Name: Path.GetFileNameWithoutExtension(csvPath),
-                Result: result,
-                Duration: fileStopwatch.Elapsed));
-        }
+        var summaries = await TrainIndividualModelsAsync(csvPaths);
 
         var aggregateResult = TrainAggregateModel();
         var combinedSummaries = summaries.ToList();
@@ -119,6 +88,45 @@ internal sealed class ForecastRunner
 
             WriteHtmlSummary(combinedSummaries);
         }
+    }
+
+    private async Task<List<ForecastSummary>> TrainIndividualModelsAsync(IReadOnlyCollection<string> csvPaths)
+    {
+        var summaries = new List<ForecastSummary>(csvPaths.Count);
+
+        foreach (var csvPath in csvPaths)
+        {
+            var fileStopwatch = Stopwatch.StartNew();
+            Log.Information("================================================");
+            Log.Information("Processing: {CsvPath}", csvPath);
+
+            var observations = (await _loader.LoadAsync(csvPath)).ToList();
+
+            if (observations.Count == 0)
+            {
+                fileStopwatch.Stop();
+                Log.Warning("  Skipped: file contains no observations.");
+                continue;
+            }
+
+            _observationsByFile[csvPath] = observations;
+
+            using var processor = new LstmForecastProcessor(_options);
+            var result = processor.Process(observations);
+            await _reportWriter.WriteAsync(csvPath, result);
+
+            fileStopwatch.Stop();
+            Log.Information("Completed processing {CsvPath} in {Elapsed}.",
+                csvPath,
+                FormatDuration(fileStopwatch.Elapsed));
+
+            summaries.Add(new ForecastSummary(
+                Name: Path.GetFileNameWithoutExtension(csvPath),
+                Result: result,
+                Duration: fileStopwatch.Elapsed));
+        }
+
+        return summaries;
     }
 
     private static string FormatDuration(TimeSpan duration)
