@@ -9,9 +9,9 @@ var logFilePath = Path.Combine(logDirectory, $"forecast_{logDateTime}.html");
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Debug()
-    .WriteTo.Console(
+    .WriteTo.Async(a => a.Console(
         restrictedToMinimumLevel: LogEventLevel.Debug,
-        buffered: false)
+        buffered: false))
     .WriteTo.Logger(lc => lc
         .Filter.ByIncludingOnly(evt => (evt.Level >= LogEventLevel.Information) && (evt.Level != LogEventLevel.Error))
         .WriteTo.HtmlLog(logFilePath, "Historical Weather Forecaster"))
