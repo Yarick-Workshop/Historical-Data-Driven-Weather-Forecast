@@ -11,7 +11,7 @@ Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Debug()
     .WriteTo.Console(restrictedToMinimumLevel: LogEventLevel.Debug)
     .WriteTo.Logger(lc => lc
-        .Filter.ByIncludingOnly(evt => evt.Level >= LogEventLevel.Information)
+        .Filter.ByIncludingOnly(evt => (evt.Level >= LogEventLevel.Information) && (evt.Level != LogEventLevel.Error))
         .WriteTo.HtmlLog(logFilePath, "Historical Weather Forecaster"))
     .CreateLogger();
 
