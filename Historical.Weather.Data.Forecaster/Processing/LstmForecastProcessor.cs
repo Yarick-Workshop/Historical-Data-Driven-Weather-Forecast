@@ -191,6 +191,7 @@ internal sealed class LstmForecastProcessor : IDisposable
         Log.Information("  [LSTM] Training {SequenceCount} sequence(s) with {FeatureCount} feature(s) each, batch size {BatchSize}, epochs {Epochs}.",
             trainingSequences.Count, featureCount, _options.BatchSize, _options.TrainingEpochs);
 
+        var stepCounter = 0;
         for (var epoch = 1; epoch <= _options.TrainingEpochs; epoch++)
         {
             Shuffle(indices, random);
@@ -217,8 +218,16 @@ internal sealed class LstmForecastProcessor : IDisposable
                 loss.backward();
                 optimizer.step();
 
-                totalLoss += loss.ToDouble();
+                var currentLoss = loss.ToDouble();
+                totalLoss += currentLoss;
                 batchCount++;
+                stepCounter++;
+
+                if (stepCounter % 100 == 0)
+                {
+                    Log.Debug("  [LSTM] Step {Step}, Epoch {Epoch}/{TotalEpochs}, Batch {Batch}/{TotalBatches}, Loss={Loss:F4}",
+                        stepCounter, epoch, _options.TrainingEpochs, batchCount, (int)Math.Ceiling((double)indices.Length / _options.BatchSize), currentLoss);
+                }
             }
 
             if (batchCount > 0)
