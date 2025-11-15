@@ -252,46 +252,30 @@ internal sealed class LstmForecastProcessor : IDisposable
                 
                 // Compute gradient statistics before optimizer step (only every 100th step to avoid overhead)
                 double? gradientNorm = null;
-                double? maxGradient = null;
-                double? minGradient = null;
                 if ((stepCounter + 1) % 100 == 0)
                 {
                     try
                     {
                         var gradNorms = new List<double>();
-                        var allGradValues = new List<double>();
                         foreach (var param in _model.Parameters())
                         {
-                            var grad = param.grad();
-                            if (grad != null && grad.requires_grad())
+                            try
                             {
+                                var grad = param.grad;
                                 using (var gradFlat = grad.flatten())
                                 {
                                     var norm = gradFlat.norm().ToDouble();
                                     gradNorms.Add(norm);
-                                    
-                                    using (var gradCpu = gradFlat.cpu())
-                                    {
-                                        var gradData = gradCpu.data<float>();
-                                        if (gradData != null && gradData.Length > 0)
-                                        {
-                                            foreach (var val in gradData)
-                                            {
-                                                allGradValues.Add((double)val);
-                                            }
-                                        }
-                                    }
                                 }
+                            }
+                            catch
+                            {
+                                // Skip parameters without gradients
                             }
                         }
                         if (gradNorms.Count > 0)
                         {
                             gradientNorm = gradNorms.Sum(); // Total gradient norm across all parameters
-                        }
-                        if (allGradValues.Count > 0)
-                        {
-                            maxGradient = allGradValues.Max();
-                            minGradient = allGradValues.Min();
                         }
                     }
                     catch
@@ -374,10 +358,6 @@ internal sealed class LstmForecastProcessor : IDisposable
                     if (gradientNorm.HasValue)
                     {
                         Log.Information("  [LSTM]   Gradient Norm:           {GradNorm:F6}", gradientNorm.Value);
-                    }
-                    if (maxGradient.HasValue && minGradient.HasValue)
-                    {
-                        Log.Information("  [LSTM]   Gradient Range:          [{MinGrad:F6}, {MaxGrad:F6}]", minGradient.Value, maxGradient.Value);
                     }
                     Log.Information("  [LSTM] Performance Metrics:");
                     var batchesPerSecond = elapsed.TotalSeconds > 0 
