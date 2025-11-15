@@ -207,16 +207,29 @@ internal sealed class LstmForecastProcessor : IDisposable
         using var lossFunction = nn.MSELoss();
         var random = new Random(42);
         var indices = Enumerable.Range(0, trainingSequences.Count).ToArray();
+        var totalBatchesPerEpoch = (int)Math.Ceiling((double)indices.Length / _options.BatchSize);
+        var totalSteps = totalBatchesPerEpoch * _options.TrainingEpochs;
 
         Log.Information("  [LSTM] Training {SequenceCount} sequence(s) with {FeatureCount} feature(s) each, batch size {BatchSize}, epochs {Epochs}.",
             trainingSequences.Count, featureCount, _options.BatchSize, _options.TrainingEpochs);
+        Log.Information("  [LSTM] Total batches per epoch: {BatchesPerEpoch}, Total training steps: {TotalSteps}",
+            totalBatchesPerEpoch, totalSteps);
 
+        var trainingStopwatch = Stopwatch.StartNew();
         var stepCounter = 0;
+        var cumulativeLoss = 0.0;
+        var cumulativeStepCount = 0;
+        var previousEpochAvgLoss = double.NaN;
+        var recentLosses = new List<double>(100); // Track last 100 losses for trend analysis
+        var epochStartLoss = double.NaN;
+        
         for (var epoch = 1; epoch <= _options.TrainingEpochs; epoch++)
         {
+            var epochStopwatch = Stopwatch.StartNew();
             Shuffle(indices, random);
             var totalLoss = 0.0;
             var batchCount = 0;
+            epochStartLoss = double.NaN;
 
             for (var batchStart = 0; batchStart < indices.Length; batchStart += _options.BatchSize)
             {
@@ -236,31 +249,172 @@ internal sealed class LstmForecastProcessor : IDisposable
                 using var loss = lossFunction.forward(output, batchTargets);
 
                 loss.backward();
+                
+                // Compute gradient statistics before optimizer step (only every 100th step to avoid overhead)
+                double? gradientNorm = null;
+                double? maxGradient = null;
+                double? minGradient = null;
+                if ((stepCounter + 1) % 100 == 0)
+                {
+                    try
+                    {
+                        var gradNorms = new List<double>();
+                        var allGradValues = new List<double>();
+                        foreach (var param in _model.Parameters())
+                        {
+                            var grad = param.grad();
+                            if (grad != null && grad.requires_grad())
+                            {
+                                using (var gradFlat = grad.flatten())
+                                {
+                                    var norm = gradFlat.norm().ToDouble();
+                                    gradNorms.Add(norm);
+                                    
+                                    using (var gradCpu = gradFlat.cpu())
+                                    {
+                                        var gradData = gradCpu.data<float>();
+                                        if (gradData != null && gradData.Length > 0)
+                                        {
+                                            foreach (var val in gradData)
+                                            {
+                                                allGradValues.Add((double)val);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (gradNorms.Count > 0)
+                        {
+                            gradientNorm = gradNorms.Sum(); // Total gradient norm across all parameters
+                        }
+                        if (allGradValues.Count > 0)
+                        {
+                            maxGradient = allGradValues.Max();
+                            minGradient = allGradValues.Min();
+                        }
+                    }
+                    catch
+                    {
+                        // If gradient computation fails, continue without it
+                    }
+                }
+
                 optimizer.step();
 
                 var currentLoss = loss.ToDouble();
+                if (double.IsNaN(epochStartLoss))
+                {
+                    epochStartLoss = currentLoss;
+                }
                 totalLoss += currentLoss;
+                cumulativeLoss += currentLoss;
                 batchCount++;
                 stepCounter++;
+                cumulativeStepCount++;
+                
+                // Track recent losses for trend analysis
+                recentLosses.Add(currentLoss);
+                if (recentLosses.Count > 100)
+                {
+                    recentLosses.RemoveAt(0);
+                }
 
                 if (stepCounter % 100 == 0)
                 {
-                    Log.Debug("  [LSTM] Step {Step}, Epoch {Epoch}/{TotalEpochs}, Batch {Batch}/{TotalBatches}, Loss={Loss:F4}",
-                        stepCounter, epoch, _options.TrainingEpochs, batchCount, (int)Math.Ceiling((double)indices.Length / _options.BatchSize), currentLoss);
+                    var avgLossSoFar = cumulativeLoss / cumulativeStepCount;
+                    var epochAvgLoss = totalLoss / batchCount;
+                    var elapsed = trainingStopwatch.Elapsed;
+                    var stepsPerSecond = elapsed.TotalSeconds > 0 
+                        ? stepCounter / elapsed.TotalSeconds 
+                        : 0.0;
+                    var estimatedTimeRemaining = totalSteps > stepCounter && stepsPerSecond > 0
+                        ? TimeSpan.FromSeconds((totalSteps - stepCounter) / stepsPerSecond)
+                        : TimeSpan.Zero;
+                    var progressPercent = (double)stepCounter / totalSteps * 100.0;
+                    
+                    // Compute loss trend
+                    var lossTrend = recentLosses.Count >= 50 
+                        ? (recentLosses.TakeLast(25).Average() - recentLosses.Take(25).Average()) / recentLosses.Take(25).Average() * 100.0
+                        : double.NaN;
+                    
+                    // Compute epoch loss change
+                    var epochLossChange = !double.IsNaN(previousEpochAvgLoss) && previousEpochAvgLoss > 0
+                        ? (epochAvgLoss - previousEpochAvgLoss) / previousEpochAvgLoss * 100.0
+                        : double.NaN;
+                    
+                    // Compute epoch start to current change
+                    var epochProgressLossChange = !double.IsNaN(epochStartLoss) && epochStartLoss > 0
+                        ? (currentLoss - epochStartLoss) / epochStartLoss * 100.0
+                        : double.NaN;
+
+                    Log.Information("  [LSTM] ========== Training Progress Report (Step {Step}/{TotalSteps}) ==========", stepCounter, totalSteps);
+                    Log.Information("  [LSTM] Progress: {Progress:F2}% | Epoch {Epoch}/{TotalEpochs} | Batch {Batch}/{TotalBatches} | Sequence Length: {SeqLength} | Features: {Features}",
+                        progressPercent, epoch, _options.TrainingEpochs, batchCount, totalBatchesPerEpoch, sequenceLength, featureCount);
+                    Log.Information("  [LSTM] Loss Metrics:");
+                    Log.Information("  [LSTM]   Current Batch Loss:     {CurrentLoss:F8}", currentLoss);
+                    Log.Information("  [LSTM]   Epoch Average Loss:     {EpochAvgLoss:F8} (over {BatchCount} batches)", epochAvgLoss, batchCount);
+                    Log.Information("  [LSTM]   Overall Average Loss:   {AvgLoss:F8} (over {TotalSteps} steps)", avgLossSoFar, cumulativeStepCount);
+                    if (!double.IsNaN(epochLossChange))
+                    {
+                        Log.Information("  [LSTM]   Epoch Loss Change:      {Change:F2}% vs previous epoch", epochLossChange);
+                    }
+                    if (!double.IsNaN(epochProgressLossChange))
+                    {
+                        Log.Information("  [LSTM]   Epoch Progress Change:  {Change:F2}% vs epoch start", epochProgressLossChange);
+                    }
+                    if (!double.IsNaN(lossTrend))
+                    {
+                        Log.Information("  [LSTM]   Recent Loss Trend:      {Trend:F2}% (last 25 vs first 25 of recent 50)", lossTrend);
+                    }
+                    Log.Information("  [LSTM] Training Configuration:");
+                    Log.Information("  [LSTM]   Learning Rate:          {LearningRate:E4}", _options.LearningRate);
+                    Log.Information("  [LSTM]   Batch Size:              {BatchSize} | Actual Batch: {ActualBatchSize}", _options.BatchSize, batchIndices.Length);
+                    Log.Information("  [LSTM]   Hidden Size:             {HiddenSize}", _options.HiddenSize);
+                    if (gradientNorm.HasValue)
+                    {
+                        Log.Information("  [LSTM]   Gradient Norm:           {GradNorm:F6}", gradientNorm.Value);
+                    }
+                    if (maxGradient.HasValue && minGradient.HasValue)
+                    {
+                        Log.Information("  [LSTM]   Gradient Range:          [{MinGrad:F6}, {MaxGrad:F6}]", minGradient.Value, maxGradient.Value);
+                    }
+                    Log.Information("  [LSTM] Performance Metrics:");
+                    var batchesPerSecond = elapsed.TotalSeconds > 0 
+                        ? cumulativeStepCount / elapsed.TotalSeconds 
+                        : 0.0;
+                    Log.Information("  [LSTM]   Training Speed:          {StepsPerSec:F2} steps/sec ({BatchesPerSec:F2} batches/sec)",
+                        stepsPerSecond, batchesPerSecond);
+                    Log.Information("  [LSTM]   Elapsed Time:            {Elapsed}", FormatDuration(elapsed));
+                    Log.Information("  [LSTM]   Estimated Time Remaining: {ETA}", FormatDuration(estimatedTimeRemaining));
+                    var epochElapsed = epochStopwatch.Elapsed;
+                    var epochETA = batchCount > 0 && epochElapsed.TotalSeconds > 0
+                        ? TimeSpan.FromSeconds((totalBatchesPerEpoch - batchCount) * (epochElapsed.TotalSeconds / batchCount))
+                        : TimeSpan.Zero;
+                    Log.Information("  [LSTM]   Epoch Elapsed:           {EpochElapsed} | Epoch ETA: {EpochETA}",
+                        FormatDuration(epochElapsed), FormatDuration(epochETA));
+                    Log.Information("  [LSTM] =================================================================");
                 }
             }
 
+            epochStopwatch.Stop();
             if (batchCount > 0)
             {
                 var avgLoss = totalLoss / batchCount;
-                Log.Debug("  [LSTM] Epoch {Epoch}/{TotalEpochs}, Batches={BatchCount}, AvgLoss={AverageLoss:F4}",
-                    epoch, _options.TrainingEpochs, batchCount, avgLoss);
+                previousEpochAvgLoss = avgLoss;
+                Log.Debug("  [LSTM] Epoch {Epoch}/{TotalEpochs} completed in {Elapsed} - Batches: {BatchCount}, AvgLoss: {AverageLoss:F6}",
+                    epoch, _options.TrainingEpochs, FormatDuration(epochStopwatch.Elapsed), batchCount, avgLoss);
             }
             else
             {
                 Log.Warning("  [LSTM] Epoch {Epoch}/{TotalEpochs}, no batches processed.", epoch, _options.TrainingEpochs);
             }
         }
+        
+        trainingStopwatch.Stop();
+        var finalAvgLoss = cumulativeLoss / cumulativeStepCount;
+        Log.Information("  [LSTM] Training Summary - Total Steps: {TotalSteps} | Final Average Loss: {FinalAvgLoss:F6} | Total Time: {TotalTime}",
+            cumulativeStepCount, finalAvgLoss, FormatDuration(trainingStopwatch.Elapsed));
     }
 
     private ForecastPrediction? TryForecastNext(IReadOnlyList<WeatherObservation> history, NormalizationStatistics stats)
