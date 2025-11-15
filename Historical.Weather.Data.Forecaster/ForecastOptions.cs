@@ -54,6 +54,11 @@ public sealed record ForecastOptions
     ///     Gets an optional path where per-file forecast CSVs should be written. When <c>null</c>, no files are written.
     /// </summary>
     public string? OutputDirectory { get; init; }
+
+    /// <summary>
+    ///     Gets an optional number of CPU cores to use for training. When <c>null</c>, all available cores are used.
+    /// </summary>
+    public int? CpuCores { get; init; }
 }
 
 

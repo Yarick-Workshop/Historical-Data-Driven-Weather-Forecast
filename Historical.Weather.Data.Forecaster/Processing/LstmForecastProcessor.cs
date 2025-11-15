@@ -23,12 +23,25 @@ internal sealed class LstmForecastProcessor : IDisposable
         _options = options;
         _device = CPU;
         
-        // Configure TorchSharp to use all available CPU cores
-        var numThreads = Environment.ProcessorCount;
+        // Configure TorchSharp to use specified or all available CPU cores
+        var availableCores = Environment.ProcessorCount;
+        var numThreads = options.CpuCores ?? availableCores;
+        
+        // Validate the number of cores
+        if (numThreads <= 0)
+        {
+            throw new ArgumentException($"Number of CPU cores must be greater than zero, but was {numThreads}.", nameof(options));
+        }
+        
+        if (numThreads > availableCores)
+        {
+            throw new ArgumentException($"Number of CPU cores ({numThreads}) cannot exceed the number of available cores ({availableCores}).", nameof(options));
+        }
+        
         torch.set_num_threads(numThreads);
         torch.set_num_interop_threads(Math.Max(1, numThreads / 2)); // Inter-op parallelism
         
-        Log.Information("  [LSTM] Configured to use {ThreadCount} CPU thread(s) for training.", numThreads);
+        Log.Information("  [LSTM] Configured to use {ThreadCount} CPU thread(s) for training (out of {AvailableCores} available).", numThreads, availableCores);
     }
 
     public ForecastResult Process(IReadOnlyList<WeatherObservation> rawObservations)

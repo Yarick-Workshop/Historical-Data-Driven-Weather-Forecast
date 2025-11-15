@@ -53,6 +53,7 @@ internal static class ForecastOptionsParser
         var batchSize = ParseInt(values, "--batch-size", errors, minValue: 1);
         var hiddenSize = ParseInt(values, "--hidden-size", errors, minValue: 4);
         var learningRate = ParseDouble(values, "--learning-rate", errors, minValue: 0.000001, maxValue: 1.0);
+        var cpuCores = ParseOptionalInt(values, "--cpu-cores", errors, minValue: 1);
         var inputPath = ResolveInputPath(values.GetValueOrDefault("--input"), errors);
         var outputPath = ResolveOutput(values.GetValueOrDefault("--output"), errors);
 
@@ -87,7 +88,8 @@ internal static class ForecastOptionsParser
             BatchSize = batchSize.Value,
             HiddenSize = hiddenSize.Value,
             AllowFallbackOutsideWindow = allowFallback,
-            OutputDirectory = outputPath
+            OutputDirectory = outputPath,
+            CpuCores = cpuCores
         };
 
         return true;
@@ -107,6 +109,7 @@ internal static class ForecastOptionsParser
         Console.WriteLine("  --batch-size <int>    Mini-batch size for the neural model (required).");
         Console.WriteLine("  --hidden-size <int>   Hidden units inside the LSTM cell (required).");
         Console.WriteLine("  --output <path>       Optional directory for forecast output CSV files.");
+        Console.WriteLine("  --cpu-cores <int>     Optional number of CPU cores to use for training. Defaults to all available cores.");
         Console.WriteLine("  --strict-window       Disable fallback to outside-window observations when gaps exist.");
         Console.WriteLine("  --help                Show this message.");
     }
@@ -173,6 +176,39 @@ internal static class ForecastOptionsParser
         if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
         {
             errors.Add($"Invalid number '{value}' for {key}.");
+            return null;
+        }
+
+        if (minValue is not null && parsed < minValue.Value)
+        {
+            errors.Add($"{key} must be >= {minValue}.");
+            return null;
+        }
+
+        if (maxValue is not null && parsed > maxValue.Value)
+        {
+            errors.Add($"{key} must be <= {maxValue}.");
+            return null;
+        }
+
+        return parsed;
+    }
+
+    private static int? ParseOptionalInt(
+        IReadOnlyDictionary<string, string> values,
+        string key,
+        ICollection<string> errors,
+        int? minValue = null,
+        int? maxValue = null)
+    {
+        if (!values.TryGetValue(key, out var value))
+        {
+            return null;
+        }
+
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            errors.Add($"Invalid integer value '{value}' for {key}.");
             return null;
         }
 
