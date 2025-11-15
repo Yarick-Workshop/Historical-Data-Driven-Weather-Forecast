@@ -224,7 +224,7 @@ internal sealed class LstmForecastProcessor : IDisposable
             if (batchCount > 0)
             {
                 var avgLoss = totalLoss / batchCount;
-                Log.Information("  [LSTM] Epoch {Epoch}/{TotalEpochs}, Batches={BatchCount}, AvgLoss={AverageLoss:F4}",
+                Log.Debug("  [LSTM] Epoch {Epoch}/{TotalEpochs}, Batches={BatchCount}, AvgLoss={AverageLoss:F4}",
                     epoch, _options.TrainingEpochs, batchCount, avgLoss);
             }
             else
