@@ -95,6 +95,7 @@ try
     Log.Information("  Average time per file: {AverageTime:F3} seconds", averageTime);
 
     LogAllKnownWeatherCharacteristics();
+    LogAllKnownWindDirections();
 
     var normalizedParseResultsByPlace = NormalizeParseResults(
         rawParseResultsByPlace,
@@ -449,6 +450,21 @@ static void LogAllKnownWeatherCharacteristics()
 
     Log.Information("Known weather characteristics (ordered): {WeatherCharacteristics}", string.Join(", ", knownCharacteristics));
     Log.Information("Total known weather characteristics: {WeatherCharacteristicsCount}", knownCharacteristics.Count);
+}
+
+static void LogAllKnownWindDirections()
+{
+    var mappings = Historical.Weather.Core.WindDirectionAzimuthConverter.GetAllKnownDirectionMappings();
+
+    if (mappings.Count == 0)
+    {
+        Log.Warning("No known wind directions are registered in the converter.");
+        return;
+    }
+
+    var formatted = string.Join(", ", mappings.Select(m => $"{m.Name}={m.Azimuth}°"));
+    Log.Information("Known wind directions (name=azimuth): {WindDirections}", formatted);
+    Log.Information("Total known wind directions: {WindDirectionsCount}", mappings.Count);
 }
 
 static bool TryInterpolateMissingObservationTimes(

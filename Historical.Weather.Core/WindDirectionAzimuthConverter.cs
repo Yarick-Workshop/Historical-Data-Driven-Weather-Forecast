@@ -40,6 +40,21 @@ public static class WindDirectionAzimuthConverter
         var locationSuffix = string.IsNullOrEmpty(context) ? string.Empty : $" in {context}";
         throw new InvalidOperationException($"Unknown wind direction '{value}'{locationSuffix}.");
     }
+
+    public static IReadOnlyList<string> GetAllKnownDirections()
+    {
+        return OrderedPairs
+            .Select(pair => pair.Name)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public static IReadOnlyList<(string Name, int Azimuth)> GetAllKnownDirectionMappings()
+    {
+        return OrderedPairs
+            .OrderBy(pair => pair.Azimuth)
+            .ToList();
+    }
 }
 
 
