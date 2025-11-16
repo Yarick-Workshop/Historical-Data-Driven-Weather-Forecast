@@ -419,12 +419,12 @@ static Dictionary<string, SortedDictionary<DateTime, (string FilePath, HtmlParse
                 if (TryInterpolateMissingObservationTimes(currentEntry.FilePath, currentEntry.Result, expectedObservationTimes, previousDayResult, nextDayResult, out var interpolatedResult))
                 {
                     normalizedResult = interpolatedResult;
-                    Log.Information("Normalized file {FilePath} using interpolation for missing observations.", currentEntry.FilePath);
+                    Log.Debug("Normalized file {FilePath} using interpolation for missing observations.", currentEntry.FilePath);
                 }
                 else
                 {
                     normalizationUnsuccessfulCount++;
-                    Log.Error(normalizationException, "Unable to normalize HTML file {FilePath} even after interpolation attempt.", currentEntry.FilePath);
+                    Log.Debug(normalizationException, "Unable to normalize HTML file {FilePath} even after interpolation attempt.", currentEntry.FilePath);
                     continue;
                 }
             }
