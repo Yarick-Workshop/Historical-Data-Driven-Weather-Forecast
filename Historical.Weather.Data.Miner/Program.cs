@@ -289,6 +289,9 @@ static List<(string FilePath, HtmlParseResult Result)> ParseFiles(
     parsingSuccessfulCount = 0;
     parsingUnsuccessfulCount = 0;
     totalFileProcessingTime = 0;
+    var successfulCountLocal = 0;
+    var unsuccessfulCountLocal = 0;
+    long totalProcessingTimeLocal = 0;
 
 	Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, file =>
 	{
@@ -302,20 +305,24 @@ static List<(string FilePath, HtmlParseResult Result)> ParseFiles(
 
 			rawParseResultsWithPaths.Add((file, result));
 
-			Interlocked.Increment(ref parsingSuccessfulCount);
+			Interlocked.Increment(ref successfulCountLocal);
 			Log.Debug("Successfully parsed HTML file: {FilePath}", file);
 		}
 		catch (Exception ex)
 		{
-			Interlocked.Increment(ref parsingUnsuccessfulCount);
+			Interlocked.Increment(ref unsuccessfulCountLocal);
 			Log.Error(ex, "Failed to parse HTML file: {FilePath}", file);
 		}
 		finally
 		{
 			fileStopwatch.Stop();
-			Interlocked.Add(ref totalFileProcessingTime, fileStopwatch.ElapsedMilliseconds);
+			Interlocked.Add(ref totalProcessingTimeLocal, fileStopwatch.ElapsedMilliseconds);
 		}
 	});
+
+    parsingSuccessfulCount = successfulCountLocal;
+    parsingUnsuccessfulCount = unsuccessfulCountLocal;
+    totalFileProcessingTime = totalProcessingTimeLocal;
 
 	return rawParseResultsWithPaths.ToList();
 }
