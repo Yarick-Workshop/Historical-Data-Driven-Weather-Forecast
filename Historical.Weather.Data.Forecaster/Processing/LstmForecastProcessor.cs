@@ -17,6 +17,7 @@ internal sealed class LstmForecastProcessor : IDisposable
     private readonly ForecastOptions _options;
     private readonly Device _device;
     private LstmRegressionModel? _model;
+    private TrainingStats? _lastTrainingStats;
 
     public LstmForecastProcessor(ForecastOptions options)
     {
@@ -47,6 +48,7 @@ internal sealed class LstmForecastProcessor : IDisposable
     public ForecastResult Process(IReadOnlyList<WeatherObservation> rawObservations)
     {
         var totalStopwatch = Stopwatch.StartNew();
+        _lastTrainingStats = null;
 
         var ordered = rawObservations
             .OrderBy(o => o.Timestamp)
@@ -86,7 +88,7 @@ internal sealed class LstmForecastProcessor : IDisposable
         }
 
         var trainingStopwatch = Stopwatch.StartNew();
-        TrainModel(trainingSequences, statistics);
+		var epochStats = TrainModel(trainingSequences, statistics);
         trainingStopwatch.Stop();
         Log.Information("  [LSTM] Training completed in {Elapsed}.", FormatDuration(trainingStopwatch.Elapsed));
 
@@ -138,6 +140,12 @@ internal sealed class LstmForecastProcessor : IDisposable
         totalStopwatch.Stop();
         Log.Information("  [LSTM] Dataset processing time: {Elapsed}.", FormatDuration(totalStopwatch.Elapsed));
 
+        _lastTrainingStats = new TrainingStats(
+            TotalTime: FormatDuration(trainingStopwatch.Elapsed),
+            TotalSteps: epochStats.Sum(e => e.Batches),
+            FinalAverageLoss: epochStats.Count > 0 ? epochStats[^1].AverageLoss : double.NaN,
+            Epochs: epochStats);
+
         return new ForecastResult(
             Place: ordered[0].Place,
             TotalRecords: ordered.Count,
@@ -146,6 +154,13 @@ internal sealed class LstmForecastProcessor : IDisposable
             Metrics: metrics,
             ValidationSeries: evaluationSeries,
             NextPrediction: nextPrediction);
+    }
+
+    public TrainingStats? GetAndResetTrainingStats()
+    {
+        var stats = _lastTrainingStats;
+        _lastTrainingStats = null;
+        return stats;
     }
 
     private ForecastResult CreateEmptyResult(
@@ -172,7 +187,7 @@ internal sealed class LstmForecastProcessor : IDisposable
         _model = new LstmRegressionModel(featureCount, _options.HiddenSize, 1);
     }
 
-    private void TrainModel(List<SequenceSample> trainingSequences, NormalizationStatistics stats)
+	private List<EpochStat> TrainModel(List<SequenceSample> trainingSequences, NormalizationStatistics stats)
     {
         if (_model is null)
         {
@@ -222,6 +237,7 @@ internal sealed class LstmForecastProcessor : IDisposable
         var previousEpochAvgLoss = double.NaN;
         var recentLosses = new List<double>(100); // Track last 100 losses for trend analysis
         var epochStartLoss = double.NaN;
+        var epochStats = new List<EpochStat>(_options.TrainingEpochs);
         
         for (var epoch = 1; epoch <= _options.TrainingEpochs; epoch++)
         {
@@ -382,11 +398,13 @@ internal sealed class LstmForecastProcessor : IDisposable
             {
                 var avgLoss = totalLoss / batchCount;
                 previousEpochAvgLoss = avgLoss;
+                epochStats.Add(new EpochStat(epoch, batchCount, avgLoss, FormatDuration(epochStopwatch.Elapsed)));
                 Log.Debug("  [LSTM] Epoch {Epoch}/{TotalEpochs} completed in {Elapsed} - Batches: {BatchCount}, AvgLoss: {AverageLoss:F6}",
                     epoch, _options.TrainingEpochs, FormatDuration(epochStopwatch.Elapsed), batchCount, avgLoss);
             }
             else
             {
+                epochStats.Add(new EpochStat(epoch, 0, double.NaN, FormatDuration(epochStopwatch.Elapsed)));
                 Log.Warning("  [LSTM] Epoch {Epoch}/{TotalEpochs}, no batches processed.", epoch, _options.TrainingEpochs);
             }
         }
@@ -395,6 +413,7 @@ internal sealed class LstmForecastProcessor : IDisposable
         var finalAvgLoss = cumulativeLoss / cumulativeStepCount;
         Log.Information("  [LSTM] Training Summary - Total Steps: {TotalSteps} | Final Average Loss: {FinalAvgLoss:F6} | Total Time: {TotalTime}",
             cumulativeStepCount, finalAvgLoss, FormatDuration(trainingStopwatch.Elapsed));
+        return epochStats;
     }
 
     private ForecastPrediction? TryForecastNext(IReadOnlyList<WeatherObservation> history, NormalizationStatistics stats)
@@ -673,6 +692,9 @@ internal sealed class LstmForecastProcessor : IDisposable
     {
         _model?.Dispose();
     }
+
+    internal sealed record EpochStat(int Epoch, int Batches, double AverageLoss, string EpochElapsed);
+    internal sealed record TrainingStats(string TotalTime, int TotalSteps, double FinalAverageLoss, List<EpochStat> Epochs);
 
     private sealed class LstmRegressionModel : IDisposable
     {

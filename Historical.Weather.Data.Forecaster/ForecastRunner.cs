@@ -100,6 +100,21 @@ internal sealed class ForecastRunner
             Log.Information("================================================");
             Log.Information("Processing: {CsvPath}", csvPath);
 
+            // Determine fixed, non-time-based output directory for JSON stats
+            var jsonDirectory = !string.IsNullOrWhiteSpace(_options.OutputDirectory)
+                ? _options.OutputDirectory!
+                : Path.Combine(Path.GetDirectoryName(csvPath) ?? Directory.GetCurrentDirectory(), "ForecastStats");
+            Directory.CreateDirectory(jsonDirectory);
+            var jsonFileName = $"{Path.GetFileNameWithoutExtension(csvPath)}.json";
+            var jsonOutputPath = Path.Combine(jsonDirectory, jsonFileName);
+
+            // Skip this CSV if corresponding JSON already exists
+            if (File.Exists(jsonOutputPath))
+            {
+                Log.Information("Stats JSON already exists for {CsvPath} at {JsonPath}. Skipping.", csvPath, jsonOutputPath);
+                continue;
+            }
+
             var observations = (await _loader.LoadAsync(csvPath)).ToList();
 
             if (observations.Count == 0)
@@ -114,6 +129,69 @@ internal sealed class ForecastRunner
             using var processor = new LstmForecastProcessor(_options);
             var result = processor.Process(observations);
             await _reportWriter.WriteAsync(csvPath, result);
+
+            // Collect training stats and write JSON report
+            var stats = processor.GetAndResetTrainingStats();
+            try
+            {
+                var jsonPayload = new
+                {
+                    File = Path.GetFileName(csvPath),
+                    Place = result.Place,
+                    Totals = new
+                    {
+                        TotalRecords = result.TotalRecords,
+                        TrainingRecords = result.TrainingRecords,
+                        ValidationRecords = result.ValidationRecords
+                    },
+                    Metrics = result.Metrics is null
+                        ? null
+                        : new
+                        {
+                            MAE = result.Metrics.MeanAbsoluteError,
+                            RMSE = result.Metrics.RootMeanSquareError,
+                            MAPE = result.Metrics.MeanAbsolutePercentageError,
+                            Samples = result.Metrics.Samples
+                        },
+                    NextPrediction = result.NextPrediction is null
+                        ? null
+                        : new
+                        {
+                            Timestamp = result.NextPrediction.Timestamp,
+                            Temperature = result.NextPrediction.Temperature
+                        },
+                    Training = stats is null
+                        ? null
+                        : new
+                        {
+                            TotalTime = stats.TotalTime,
+                            TotalSteps = stats.TotalSteps,
+                            FinalAverageLoss = stats.FinalAverageLoss,
+                            Epochs = stats.Epochs.Select(e => new
+                            {
+                                e.Epoch,
+                                e.Batches,
+                                e.AverageLoss,
+                                e.EpochElapsed
+                            }).ToList()
+                        },
+                    Processing = new
+                    {
+                        Duration = FormatDuration(fileStopwatch.Elapsed)
+                    }
+                };
+
+                await using var jsonStream = File.Open(jsonOutputPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                await System.Text.Json.JsonSerializer.SerializeAsync(jsonStream, jsonPayload, new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+                Log.Information("Wrote training stats JSON to {JsonPath}", jsonOutputPath);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to write training stats JSON for {CsvPath}", csvPath);
+            }
 
             fileStopwatch.Stop();
             Log.Information("Completed processing {CsvPath} in {Elapsed}.",
