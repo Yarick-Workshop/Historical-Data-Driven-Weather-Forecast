@@ -5,6 +5,8 @@ using Microsoft.Extensions.Configuration;
 using Serilog;
 using Serilog.Events;
 using System.Diagnostics;
+using System.Collections.Concurrent;
+using System.Threading;
 using System.IO;
 using System.Linq;
 using System.Globalization;
@@ -283,39 +285,39 @@ static List<(string FilePath, HtmlParseResult Result)> ParseFiles(
     out int parsingUnsuccessfulCount,
     out long totalFileProcessingTime)
 {
-    var rawParseResultsWithPaths = new List<(string FilePath, HtmlParseResult Result)>();
+	var rawParseResultsWithPaths = new ConcurrentBag<(string FilePath, HtmlParseResult Result)>();
     parsingSuccessfulCount = 0;
     parsingUnsuccessfulCount = 0;
     totalFileProcessingTime = 0;
 
-    foreach (var file in files)
-    {
-        Log.Debug("File found: {FilePath}", file);
+	Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, file =>
+	{
+		Log.Debug("File found: {FilePath}", file);
 
-        var fileStopwatch = Stopwatch.StartNew();
+		var fileStopwatch = Stopwatch.StartNew();
 
-        try
-        {
-            var result = htmlParser.ParseFile(file);
+		try
+		{
+			var result = htmlParser.ParseFile(file);
 
-            rawParseResultsWithPaths.Add((file, result));
+			rawParseResultsWithPaths.Add((file, result));
 
-            parsingSuccessfulCount++;
-            Log.Debug("Successfully parsed HTML file: {FilePath}", file);
-        }
-        catch (Exception ex)
-        {
-            parsingUnsuccessfulCount++;
-            Log.Error(ex, "Failed to parse HTML file: {FilePath}", file);
-        }
-        finally
-        {
-            fileStopwatch.Stop();
-            totalFileProcessingTime += fileStopwatch.ElapsedMilliseconds;
-        }
-    }
+			Interlocked.Increment(ref parsingSuccessfulCount);
+			Log.Debug("Successfully parsed HTML file: {FilePath}", file);
+		}
+		catch (Exception ex)
+		{
+			Interlocked.Increment(ref parsingUnsuccessfulCount);
+			Log.Error(ex, "Failed to parse HTML file: {FilePath}", file);
+		}
+		finally
+		{
+			fileStopwatch.Stop();
+			Interlocked.Add(ref totalFileProcessingTime, fileStopwatch.ElapsedMilliseconds);
+		}
+	});
 
-    return rawParseResultsWithPaths;
+	return rawParseResultsWithPaths.ToList();
 }
 
 static Dictionary<string, SortedDictionary<DateTime, (string FilePath, HtmlParseResult Result)>> OrganizeParseResultsByPlaceAndDate(
