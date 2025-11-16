@@ -110,7 +110,7 @@ internal sealed class WeatherCsvLoader
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            return 0d;
+            throw new InvalidOperationException("Numeric value is null or empty.");
         }
 
         if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var result))
@@ -123,7 +123,7 @@ internal sealed class WeatherCsvLoader
             return result;
         }
 
-        return 0d;
+        throw new InvalidOperationException($"Failed to parse numeric value '{value}'.");
     }
 
     private static bool IsPositive(string? value)
