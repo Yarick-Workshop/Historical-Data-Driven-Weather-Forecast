@@ -24,9 +24,9 @@ public class WeatherDataRow
     public int Temperature { get; }
 
     /// <summary>
-    /// Gets the wind direction (e.g., "Западный").
+    /// Gets the wind direction azimuth angle (0..359 degrees).
     /// </summary>
-    public string WindDirection { get; }
+    public int WindDirectionAzimuth { get; }
 
     /// <summary>
     /// Gets the wind speed in m/s.
@@ -49,7 +49,7 @@ public class WeatherDataRow
     /// <param name="time">The date and time value.</param>
     /// <param name="weatherCharacteristics">The weather characteristics flags.</param>
     /// <param name="temperature">The air temperature in degrees Celsius.</param>
-    /// <param name="windDirection">The wind direction.</param>
+    /// <param name="windDirectionAzimuth">The wind direction azimuth angle (0..359).</param>
     /// <param name="windSpeed">The wind speed in m/s.</param>
     /// <param name="atmosphericPressure">The atmospheric pressure.</param>
     /// <param name="humidity">The air humidity percentage.</param>
@@ -57,7 +57,7 @@ public class WeatherDataRow
         DateTime time,
         WeatherCharacteristics weatherCharacteristics,
         int temperature,
-        string windDirection,
+        int windDirectionAzimuth,
         decimal windSpeed,
         int atmosphericPressure,
         int humidity)
@@ -65,7 +65,7 @@ public class WeatherDataRow
         Time = time;
         WeatherCharacteristics = weatherCharacteristics;
         Temperature = temperature;
-        WindDirection = windDirection;
+        WindDirectionAzimuth = windDirectionAzimuth;
         WindSpeed = windSpeed;
         AtmosphericPressure = atmosphericPressure;
         Humidity = humidity;

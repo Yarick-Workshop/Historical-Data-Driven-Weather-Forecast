@@ -165,7 +165,7 @@ public class RealWeatherHtmlParser
             var temperature = ParseTemperature(cells[2], filePath);
 
             // Extract wind direction and speed (column 4)
-            var (windDirection, windSpeed) = ExtractWindDirectionAndSpeed(cells[3], filePath);
+            var (windDirectionAzimuth, windSpeed) = ExtractWindDirectionAndSpeed(cells[3], filePath);
 
             // Extract atmospheric pressure (column 5) - format: "740"
             var atmosphericPressure = ParseAtmosphericPressure(cells[4], filePath);
@@ -177,7 +177,7 @@ public class RealWeatherHtmlParser
                 time,
                 weatherCharacteristics,
                 temperature,
-                windDirection,
+                windDirectionAzimuth,
                 windSpeed,
                 atmosphericPressure,
                 humidity));
@@ -279,7 +279,7 @@ public class RealWeatherHtmlParser
     /// <param name="filePath">The file path for error reporting.</param>
     /// <returns>A tuple containing wind direction and speed.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the cell is null or wind information cannot be extracted.</exception>
-    private (string WindDirection, decimal WindSpeed) ExtractWindDirectionAndSpeed(HtmlNode cell, string filePath)
+    private (int WindDirectionAzimuth, decimal WindSpeed) ExtractWindDirectionAndSpeed(HtmlNode cell, string filePath)
     {
         if (cell == null)
         {
@@ -302,6 +302,9 @@ public class RealWeatherHtmlParser
             throw new InvalidOperationException(
                 $"Wind direction not found (missing img alt/title) in file '{filePath}'");
         }
+
+        // Convert textual wind direction to azimuth degrees
+        var azimuth = Historical.Weather.Core.WindDirectionAzimuthConverter.FromString(direction, filePath);
 
         // Extract wind speed from text nodes
         var textNodes = cell.SelectNodes(".//text()[not(ancestor::img)]");
@@ -328,7 +331,7 @@ public class RealWeatherHtmlParser
                 $"Failed to parse wind speed '{speedText}' as decimal in file '{filePath}'");
         }
 
-        return (direction, windSpeed);
+        return (azimuth, windSpeed);
     }
 
     /// <summary>

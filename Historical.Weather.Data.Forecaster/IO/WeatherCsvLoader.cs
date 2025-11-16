@@ -63,7 +63,10 @@ internal sealed class WeatherCsvLoader
                 }
 
                 var windSpeed = ParseDouble(csv.GetField(WeatherCsvColumns.WindSpeed));
-                var (windDirSin, windDirCos) = EncodeWindDirection(csv.GetField(WeatherCsvColumns.WindDirection));
+                var windDirectionAngle = ParseDouble(csv.GetField(WeatherCsvColumns.WindDirection));
+                var radians = windDirectionAngle * Math.PI / 180d;
+                var windDirSin = Math.Sin(radians);
+                var windDirCos = Math.Cos(radians);
                 var pressure = ParseDouble(csv.GetField(WeatherCsvColumns.AtmosphericPressure));
                 var humidity = ParseDouble(csv.GetField(WeatherCsvColumns.Humidity));
 
@@ -128,58 +131,5 @@ internal sealed class WeatherCsvLoader
         return value is "1" or "True" or "true";
     }
 
-    private static (double Sin, double Cos) EncodeWindDirection(string? direction)
-    {
-        if (string.IsNullOrWhiteSpace(direction))
-        {
-            return (0d, 0d);
-        }
-
-        var normalized = direction.Trim().ToLowerInvariant();
-        var hasNorth = normalized.Contains("север");
-        var hasSouth = normalized.Contains("юг");
-        var hasEast = normalized.Contains("вост");
-        var hasWest = normalized.Contains("зап");
-
-        double angle;
-        if (hasNorth && hasEast)
-        {
-            angle = 45d;
-        }
-        else if (hasSouth && hasEast)
-        {
-            angle = 135d;
-        }
-        else if (hasSouth && hasWest)
-        {
-            angle = 225d;
-        }
-        else if (hasNorth && hasWest)
-        {
-            angle = 315d;
-        }
-        else if (hasNorth)
-        {
-            angle = 0d;
-        }
-        else if (hasEast)
-        {
-            angle = 90d;
-        }
-        else if (hasSouth)
-        {
-            angle = 180d;
-        }
-        else if (hasWest)
-        {
-            angle = 270d;
-        }
-        else
-        {
-            return (0d, 0d);
-        }
-
-        var radians = angle * Math.PI / 180d;
-        return (Math.Sin(radians), Math.Cos(radians));
-    }
+    // No longer needed: wind direction is provided as azimuth angle in CSV
 }

@@ -577,14 +577,14 @@ static bool TryCreateInterpolatedRow(
     var atmosphericPressure = InterpolateInt(previousRow.AtmosphericPressure, nextRow.AtmosphericPressure, ratio);
     var humidity = InterpolateInt(previousRow.Humidity, nextRow.Humidity, ratio);
 
-    var windDirection = ratio <= 0.5 ? previousRow.WindDirection : nextRow.WindDirection;
+    var windDirectionAzimuth = ratio <= 0.5 ? previousRow.WindDirectionAzimuth : nextRow.WindDirectionAzimuth;
     var characteristics = previousRow.WeatherCharacteristics | nextRow.WeatherCharacteristics;
 
     interpolatedRow = new WeatherDataRow(
         targetDateTime,
         characteristics,
         temperature,
-        windDirection,
+        windDirectionAzimuth,
         windSpeed,
         atmosphericPressure,
         humidity);

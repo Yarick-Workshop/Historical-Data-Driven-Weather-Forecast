@@ -107,7 +107,7 @@ public static class WeatherDataCsvWriter
                     place,
                     row.Time.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
                     row.Temperature.ToString(CultureInfo.InvariantCulture),
-                    row.WindDirection,
+                    row.WindDirectionAzimuth.ToString(CultureInfo.InvariantCulture),
                     row.WindSpeed.ToString(CultureInfo.InvariantCulture),
                     row.AtmosphericPressure.ToString(CultureInfo.InvariantCulture),
                     row.Humidity.ToString(CultureInfo.InvariantCulture)
