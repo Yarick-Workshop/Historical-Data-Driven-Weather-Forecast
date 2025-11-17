@@ -13,6 +13,8 @@ namespace Historical.Weather.Data.Forecaster.Processing;
 internal sealed class LstmForecastProcessor : IDisposable
 {
     private const int BaseFeatureCount = 6;
+    private static bool _threadsConfigured = false;
+    private static readonly object _threadConfigLock = new object();
 
     private readonly ForecastOptions _options;
     private readonly Device _device;
@@ -25,24 +27,32 @@ internal sealed class LstmForecastProcessor : IDisposable
         _device = CPU;
         
         // Configure TorchSharp to use specified or all available CPU cores
-        var availableCores = Environment.ProcessorCount;
-        var numThreads = options.CpuCores ?? availableCores;
-        
-        // Validate the number of cores
-        if (numThreads <= 0)
+        // Only configure threads once - TorchSharp doesn't allow re-initialization
+        lock (_threadConfigLock)
         {
-            throw new ArgumentException($"Number of CPU cores must be greater than zero, but was {numThreads}.", nameof(options));
+            if (!_threadsConfigured)
+            {
+                var availableCores = Environment.ProcessorCount;
+                var numThreads = options.CpuCores ?? availableCores;
+                
+                // Validate the number of cores
+                if (numThreads <= 0)
+                {
+                    throw new ArgumentException($"Number of CPU cores must be greater than zero, but was {numThreads}.", nameof(options));
+                }
+                
+                if (numThreads > availableCores)
+                {
+                    throw new ArgumentException($"Number of CPU cores ({numThreads}) cannot exceed the number of available cores ({availableCores}).", nameof(options));
+                }
+                
+                torch.set_num_threads(numThreads);
+                torch.set_num_interop_threads(Math.Max(1, numThreads / 2)); // Inter-op parallelism
+                _threadsConfigured = true;
+                
+                Log.Information("  [LSTM] Configured to use {ThreadCount} CPU thread(s) for training (out of {AvailableCores} available).", numThreads, availableCores);
+            }
         }
-        
-        if (numThreads > availableCores)
-        {
-            throw new ArgumentException($"Number of CPU cores ({numThreads}) cannot exceed the number of available cores ({availableCores}).", nameof(options));
-        }
-        
-        torch.set_num_threads(numThreads);
-        torch.set_num_interop_threads(Math.Max(1, numThreads / 2)); // Inter-op parallelism
-        
-        Log.Information("  [LSTM] Configured to use {ThreadCount} CPU thread(s) for training (out of {AvailableCores} available).", numThreads, availableCores);
     }
 
     public ForecastResult Process(IReadOnlyList<WeatherObservation> rawObservations)

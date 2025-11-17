@@ -94,6 +94,9 @@ internal sealed class ForecastRunner
     {
         var summaries = new List<ForecastSummary>(csvPaths.Count);
 
+        // Reuse a single processor instance to avoid TorchSharp re-initialization issues
+        using var processor = new LstmForecastProcessor(_options);
+
         foreach (var csvPath in csvPaths)
         {
             var fileStopwatch = Stopwatch.StartNew();
@@ -126,7 +129,6 @@ internal sealed class ForecastRunner
 
             _observationsByFile[csvPath] = observations;
 
-            using var processor = new LstmForecastProcessor(_options);
             var result = processor.Process(observations);
             await _reportWriter.WriteAsync(csvPath, result);
 
