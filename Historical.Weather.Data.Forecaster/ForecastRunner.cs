@@ -44,7 +44,7 @@ internal sealed class ForecastRunner
 
         var summaries = await TrainIndividualModelsAsync(csvPaths);
 
-        var aggregateResult = TrainAggregateModel();
+        var aggregateResult = await TrainAggregateModelAsync();
         var combinedSummaries = summaries.ToList();
         if (aggregateResult is not null)
         {
@@ -282,25 +282,55 @@ internal sealed class ForecastRunner
         }
     }
 
-    private AggregateTrainingResult? TrainAggregateModel()
+    private async Task<AggregateTrainingResult?> TrainAggregateModelAsync()
     {
-        if (_observationsByFile.Count == 0)
+        Log.Information("Step 2/2: Training aggregate model across all CSV files.");
+
+        // Re-read all CSV files from the input path
+        var csvPaths = ResolveCsvPaths(_options.InputPath).ToList();
+        if (csvPaths.Count == 0)
         {
+            Log.Warning("No CSV files found for aggregate training.");
             return null;
         }
 
-        Log.Information("Step 2/2: Training aggregate model across all CSV files.");
+        // Determine output directory for JSON stats (use first CSV file's directory as reference)
+        var firstCsvPath = csvPaths.First();
+        var jsonDirectory = !string.IsNullOrWhiteSpace(_options.OutputDirectory)
+            ? _options.OutputDirectory!
+            : Path.Combine(Path.GetDirectoryName(firstCsvPath) ?? Directory.GetCurrentDirectory(), "ForecastStats");
+        Directory.CreateDirectory(jsonDirectory);
+        var jsonFileName = "Все файлы.json";
+        var jsonOutputPath = Path.Combine(jsonDirectory, jsonFileName);
+
+        // Check if the aggregate JSON file already exists
+        if (File.Exists(jsonOutputPath))
+        {
+            Log.Information("Aggregate stats JSON already exists at {JsonPath}. Skipping aggregate training.", jsonOutputPath);
+            return null;
+        }
 
         var aggregateStopwatch = Stopwatch.StartNew();
-        var aggregated = _observationsByFile
-            .SelectMany(pair => pair.Value.Select(obs => (File: pair.Key, Observation: obs)))
-            .OrderBy(entry => entry.Observation.Timestamp)
-            .Select(entry => new WeatherObservation(
-                entry.File,
-                entry.Observation.Timestamp,
-                entry.Observation.Temperature,
-                entry.Observation.FeatureVector.ToArray(),
-                entry.Observation.Characteristics))
+        
+        // Load all observations from all CSV files
+        var aggregated = new List<WeatherObservation>();
+        foreach (var csvPath in csvPaths)
+        {
+            var observations = await _loader.LoadAsync(csvPath);
+            foreach (var obs in observations)
+            {
+                aggregated.Add(new WeatherObservation(
+                    csvPath,
+                    obs.Timestamp,
+                    obs.Temperature,
+                    obs.FeatureVector.ToArray(),
+                    obs.Characteristics));
+            }
+        }
+
+        // Order by timestamp
+        aggregated = aggregated
+            .OrderBy(obs => obs.Timestamp)
             .ToList();
 
         if (aggregated.Count <= _options.WindowSize)
@@ -336,6 +366,69 @@ internal sealed class ForecastRunner
         else
         {
             Log.Warning("Aggregate next forecast unavailable (insufficient history).");
+        }
+
+        // Collect training stats and write JSON report
+        var stats = processor.GetAndResetTrainingStats();
+        try
+        {
+            var jsonPayload = new
+            {
+                File = jsonFileName,
+                Place = result.Place,
+                Totals = new
+                {
+                    TotalRecords = result.TotalRecords,
+                    TrainingRecords = result.TrainingRecords,
+                    ValidationRecords = result.ValidationRecords
+                },
+                Metrics = result.Metrics is null
+                    ? null
+                    : new
+                    {
+                        MAE = result.Metrics.MeanAbsoluteError,
+                        RMSE = result.Metrics.RootMeanSquareError,
+                        MAPE = result.Metrics.MeanAbsolutePercentageError,
+                        Samples = result.Metrics.Samples
+                    },
+                NextPrediction = result.NextPrediction is null
+                    ? null
+                    : new
+                    {
+                        Timestamp = result.NextPrediction.Timestamp,
+                        Temperature = result.NextPrediction.Temperature
+                    },
+                Training = stats is null
+                    ? null
+                    : new
+                    {
+                        TotalTime = stats.TotalTime,
+                        TotalSteps = stats.TotalSteps,
+                        FinalAverageLoss = stats.FinalAverageLoss,
+                        Epochs = stats.Epochs.Select(e => new
+                        {
+                            e.Epoch,
+                            e.Batches,
+                            e.AverageLoss,
+                            e.EpochElapsed
+                        }).ToList()
+                    },
+                Processing = new
+                {
+                    Duration = FormatDuration(aggregateStopwatch.Elapsed)
+                }
+            };
+
+            await using var jsonStream = File.Open(jsonOutputPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            await System.Text.Json.JsonSerializer.SerializeAsync(jsonStream, jsonPayload, new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+            Log.Information("Wrote aggregate training stats JSON to {JsonPath}", jsonOutputPath);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to write aggregate training stats JSON");
         }
 
         return new AggregateTrainingResult(
