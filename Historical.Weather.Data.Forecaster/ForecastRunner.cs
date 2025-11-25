@@ -92,116 +92,126 @@ internal sealed class ForecastRunner
 
     private async Task<List<ForecastSummary>> TrainIndividualModelsAsync(IReadOnlyCollection<string> csvPaths)
     {
-        var summaries = new List<ForecastSummary>(csvPaths.Count);
+        var summaries = new List<ForecastSummary>(csvPaths.Count * 2); // LSTM and GRU for each file
 
         foreach (var csvPath in csvPaths)
         {
-            var fileStopwatch = Stopwatch.StartNew();
-            Log.Information("================================================");
-            Log.Information("Processing: {CsvPath}", csvPath);
-
-            // Determine fixed, non-time-based output directory for JSON stats
-            var jsonDirectory = !string.IsNullOrWhiteSpace(_options.OutputDirectory)
-                ? _options.OutputDirectory!
-                : Path.Combine(Path.GetDirectoryName(csvPath) ?? Directory.GetCurrentDirectory(), "ForecastStats");
-            Directory.CreateDirectory(jsonDirectory);
-            var jsonFileName = $"{Path.GetFileNameWithoutExtension(csvPath)}.json";
-            var jsonOutputPath = Path.Combine(jsonDirectory, jsonFileName);
-
-            // Skip this CSV if corresponding JSON already exists
-            if (File.Exists(jsonOutputPath))
-            {
-                Log.Information("Stats JSON already exists for {CsvPath} at {JsonPath}. Skipping.", csvPath, jsonOutputPath);
-                continue;
-            }
-
             var observations = (await _loader.LoadAsync(csvPath)).ToList();
 
             if (observations.Count == 0)
             {
-                fileStopwatch.Stop();
                 Log.Warning("  Skipped: file contains no observations.");
                 continue;
             }
 
             _observationsByFile[csvPath] = observations;
 
-            using var processor = new LstmForecastProcessor(_options);
-            var result = processor.Process(observations);
-            await _reportWriter.WriteAsync(csvPath, result);
-
-            // Collect training stats and write JSON report
-            var stats = processor.GetAndResetTrainingStats();
-            try
+            // Process both LSTM and GRU
+            foreach (var networkType in new[] { NeuralNetworkType.LSTM, NeuralNetworkType.GRU })
             {
-                var jsonPayload = new
+                var fileStopwatch = Stopwatch.StartNew();
+                Log.Information("================================================");
+                Log.Information("Processing: {CsvPath} with {NetworkType}", csvPath, networkType);
+
+                // Determine fixed, non-time-based output directory for JSON stats
+                var jsonDirectory = !string.IsNullOrWhiteSpace(_options.OutputDirectory)
+                    ? _options.OutputDirectory!
+                    : Path.Combine(Path.GetDirectoryName(csvPath) ?? Directory.GetCurrentDirectory(), "ForecastStats");
+                Directory.CreateDirectory(jsonDirectory);
+                
+                // Generate JSON filename with suffix for GRU
+                var baseFileName = Path.GetFileNameWithoutExtension(csvPath);
+                var jsonFileName = networkType == NeuralNetworkType.GRU 
+                    ? $"{baseFileName}_gru.json"
+                    : $"{baseFileName}.json";
+                var jsonOutputPath = Path.Combine(jsonDirectory, jsonFileName);
+
+                // Skip this CSV if corresponding JSON already exists
+                if (File.Exists(jsonOutputPath))
                 {
-                    File = Path.GetFileName(csvPath),
-                    Place = result.Place,
-                    Totals = new
+                    Log.Information("Stats JSON already exists for {CsvPath} with {NetworkType} at {JsonPath}. Skipping.", csvPath, networkType, jsonOutputPath);
+                    continue;
+                }
+
+                using var processor = new NeuralNetworkForecastProcessor(_options, networkType);
+                var result = processor.Process(observations);
+                await _reportWriter.WriteAsync(csvPath, result);
+
+                // Collect training stats and write JSON report
+                var stats = processor.GetAndResetTrainingStats();
+                try
+                {
+                    var jsonPayload = new
                     {
-                        TotalRecords = result.TotalRecords,
-                        TrainingRecords = result.TrainingRecords,
-                        ValidationRecords = result.ValidationRecords
-                    },
-                    Metrics = result.Metrics is null
-                        ? null
-                        : new
+                        File = Path.GetFileName(csvPath),
+                        NetworkType = networkType.ToString(),
+                        Place = result.Place,
+                        Totals = new
                         {
-                            MAE = result.Metrics.MeanAbsoluteError,
-                            RMSE = result.Metrics.RootMeanSquareError,
-                            MAPE = result.Metrics.MeanAbsolutePercentageError,
-                            Samples = result.Metrics.Samples
+                            TotalRecords = result.TotalRecords,
+                            TrainingRecords = result.TrainingRecords,
+                            ValidationRecords = result.ValidationRecords
                         },
-                    NextPrediction = result.NextPrediction is null
-                        ? null
-                        : new
-                        {
-                            Timestamp = result.NextPrediction.Timestamp,
-                            Temperature = result.NextPrediction.Temperature
-                        },
-                    Training = stats is null
-                        ? null
-                        : new
-                        {
-                            TotalTime = stats.TotalTime,
-                            TotalSteps = stats.TotalSteps,
-                            FinalAverageLoss = stats.FinalAverageLoss,
-                            Epochs = stats.Epochs.Select(e => new
+                        Metrics = result.Metrics is null
+                            ? null
+                            : new
                             {
-                                e.Epoch,
-                                e.Batches,
-                                e.AverageLoss,
-                                e.EpochElapsed
-                            }).ToList()
-                        },
-                    Processing = new
+                                MAE = result.Metrics.MeanAbsoluteError,
+                                RMSE = result.Metrics.RootMeanSquareError,
+                                MAPE = result.Metrics.MeanAbsolutePercentageError,
+                                Samples = result.Metrics.Samples
+                            },
+                        NextPrediction = result.NextPrediction is null
+                            ? null
+                            : new
+                            {
+                                Timestamp = result.NextPrediction.Timestamp,
+                                Temperature = result.NextPrediction.Temperature
+                            },
+                        Training = stats is null
+                            ? null
+                            : new
+                            {
+                                TotalTime = stats.TotalTime,
+                                TotalSteps = stats.TotalSteps,
+                                FinalAverageLoss = stats.FinalAverageLoss,
+                                Epochs = stats.Epochs.Select(e => new
+                                {
+                                    e.Epoch,
+                                    e.Batches,
+                                    e.AverageLoss,
+                                    e.EpochElapsed
+                                }).ToList()
+                            },
+                        Processing = new
+                        {
+                            Duration = FormatDuration(fileStopwatch.Elapsed)
+                        }
+                    };
+
+                    await using var jsonStream = File.Open(jsonOutputPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                    await System.Text.Json.JsonSerializer.SerializeAsync(jsonStream, jsonPayload, new System.Text.Json.JsonSerializerOptions
                     {
-                        Duration = FormatDuration(fileStopwatch.Elapsed)
-                    }
-                };
-
-                await using var jsonStream = File.Open(jsonOutputPath, FileMode.Create, FileAccess.Write, FileShare.None);
-                await System.Text.Json.JsonSerializer.SerializeAsync(jsonStream, jsonPayload, new System.Text.Json.JsonSerializerOptions
+                        WriteIndented = true
+                    });
+                    Log.Information("Wrote training stats JSON to {JsonPath}", jsonOutputPath);
+                }
+                catch (Exception ex)
                 {
-                    WriteIndented = true
-                });
-                Log.Information("Wrote training stats JSON to {JsonPath}", jsonOutputPath);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Failed to write training stats JSON for {CsvPath}", csvPath);
-            }
+                    Log.Warning(ex, "Failed to write training stats JSON for {CsvPath} with {NetworkType}", csvPath, networkType);
+                }
 
-            fileStopwatch.Stop();
-            Log.Information("Completed processing {CsvPath} in {Elapsed}.",
-                csvPath,
-                FormatDuration(fileStopwatch.Elapsed));
+                fileStopwatch.Stop();
+                Log.Information("Completed processing {CsvPath} with {NetworkType} in {Elapsed}.",
+                    csvPath,
+                    networkType,
+                    FormatDuration(fileStopwatch.Elapsed));
 
-            summaries.Add(new ForecastSummary(
-                Name: Path.GetFileNameWithoutExtension(csvPath),
-                Result: result,
-                Duration: fileStopwatch.Elapsed));
+                summaries.Add(new ForecastSummary(
+                    Name: $"{Path.GetFileNameWithoutExtension(csvPath)} ({networkType})",
+                    Result: result,
+                    Duration: fileStopwatch.Elapsed));
+            }
         }
 
         return summaries;
@@ -300,18 +310,7 @@ internal sealed class ForecastRunner
             ? _options.OutputDirectory!
             : Path.Combine(Path.GetDirectoryName(firstCsvPath) ?? Directory.GetCurrentDirectory(), "ForecastStats");
         Directory.CreateDirectory(jsonDirectory);
-        var jsonFileName = "Все файлы.json";
-        var jsonOutputPath = Path.Combine(jsonDirectory, jsonFileName);
 
-        // Check if the aggregate JSON file already exists
-        if (File.Exists(jsonOutputPath))
-        {
-            Log.Information("Aggregate stats JSON already exists at {JsonPath}. Skipping aggregate training.", jsonOutputPath);
-            return null;
-        }
-
-        var aggregateStopwatch = Stopwatch.StartNew();
-        
         // Load all observations from all CSV files
         var aggregated = new List<WeatherObservation>();
         foreach (var csvPath in csvPaths)
@@ -339,101 +338,139 @@ internal sealed class ForecastRunner
             return null;
         }
 
-        using var processor = new LstmForecastProcessor(_options);
-        var result = processor.Process(aggregated);
+        // Process both LSTM and GRU for aggregate model
+        ForecastResult? bestResult = null;
+        ForecastSummary? bestSummary = null;
+        var aggregateStopwatch = Stopwatch.StartNew();
+
+        foreach (var networkType in new[] { NeuralNetworkType.LSTM, NeuralNetworkType.GRU })
+        {
+            var networkStopwatch = Stopwatch.StartNew();
+            Log.Information("Training aggregate {NetworkType} model...", networkType);
+
+            var jsonFileName = networkType == NeuralNetworkType.GRU 
+                ? "Все файлы_gru.json"
+                : "Все файлы.json";
+            var jsonOutputPath = Path.Combine(jsonDirectory, jsonFileName);
+
+            // Check if the aggregate JSON file already exists
+            if (File.Exists(jsonOutputPath))
+            {
+                Log.Information("Aggregate {NetworkType} stats JSON already exists at {JsonPath}. Skipping.", networkType, jsonOutputPath);
+                continue;
+            }
+
+            using var processor = new NeuralNetworkForecastProcessor(_options, networkType);
+            var result = processor.Process(aggregated);
+            networkStopwatch.Stop();
+
+            Log.Information("Aggregate {NetworkType} model trained in {Elapsed}.", networkType, FormatDuration(networkStopwatch.Elapsed));
+
+            if (result.Metrics is null)
+            {
+                Log.Warning("Aggregate {NetworkType} metrics unavailable: insufficient validation rows.", networkType);
+            }
+            else
+            {
+                Log.Information("Aggregate {NetworkType} metrics -> MAE: {MAE:F2}°C, RMSE: {RMSE:F2}°C, MAPE: {MAPE}",
+                    networkType,
+                    result.Metrics.MeanAbsoluteError,
+                    result.Metrics.RootMeanSquareError,
+                    result.Metrics.MeanAbsolutePercentageError?.ToString("F2", CultureInfo.InvariantCulture) ?? "n/a");
+            }
+
+            if (result.NextPrediction is { } prediction)
+            {
+                Log.Information("Aggregate {NetworkType} next forecast at {Timestamp:yyyy-MM-dd HH:mm}, temperature {Temperature:F2}°C",
+                    networkType,
+                    prediction.Timestamp,
+                    prediction.Temperature);
+            }
+            else
+            {
+                Log.Warning("Aggregate {NetworkType} next forecast unavailable (insufficient history).", networkType);
+            }
+
+            // Collect training stats and write JSON report
+            var stats = processor.GetAndResetTrainingStats();
+            try
+            {
+                var jsonPayload = new
+                {
+                    File = jsonFileName,
+                    NetworkType = networkType.ToString(),
+                    Place = result.Place,
+                    Totals = new
+                    {
+                        TotalRecords = result.TotalRecords,
+                        TrainingRecords = result.TrainingRecords,
+                        ValidationRecords = result.ValidationRecords
+                    },
+                    Metrics = result.Metrics is null
+                        ? null
+                        : new
+                        {
+                            MAE = result.Metrics.MeanAbsoluteError,
+                            RMSE = result.Metrics.RootMeanSquareError,
+                            MAPE = result.Metrics.MeanAbsolutePercentageError,
+                            Samples = result.Metrics.Samples
+                        },
+                    NextPrediction = result.NextPrediction is null
+                        ? null
+                        : new
+                        {
+                            Timestamp = result.NextPrediction.Timestamp,
+                            Temperature = result.NextPrediction.Temperature
+                        },
+                    Training = stats is null
+                        ? null
+                        : new
+                        {
+                            TotalTime = stats.TotalTime,
+                            TotalSteps = stats.TotalSteps,
+                            FinalAverageLoss = stats.FinalAverageLoss,
+                            Epochs = stats.Epochs.Select(e => new
+                            {
+                                e.Epoch,
+                                e.Batches,
+                                e.AverageLoss,
+                                e.EpochElapsed
+                            }).ToList()
+                        },
+                    Processing = new
+                    {
+                        Duration = FormatDuration(networkStopwatch.Elapsed)
+                    }
+                };
+
+                await using var jsonStream = File.Open(jsonOutputPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                await System.Text.Json.JsonSerializer.SerializeAsync(jsonStream, jsonPayload, new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+                Log.Information("Wrote aggregate {NetworkType} training stats JSON to {JsonPath}", networkType, jsonOutputPath);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to write aggregate {NetworkType} training stats JSON", networkType);
+            }
+
+            // Keep track of the first result (LSTM) for backward compatibility
+            if (bestResult is null)
+            {
+                bestResult = result;
+                bestSummary = new ForecastSummary($"Aggregate ({networkType})", result, networkStopwatch.Elapsed);
+            }
+        }
+
         aggregateStopwatch.Stop();
 
-        Log.Information("Aggregate model trained in {Elapsed}.", FormatDuration(aggregateStopwatch.Elapsed));
-
-        if (result.Metrics is null)
+        if (bestResult is null || bestSummary is null)
         {
-            Log.Warning("Aggregate metrics unavailable: insufficient validation rows.");
-        }
-        else
-        {
-            Log.Information("Aggregate metrics -> MAE: {MAE:F2}°C, RMSE: {RMSE:F2}°C, MAPE: {MAPE}",
-                result.Metrics.MeanAbsoluteError,
-                result.Metrics.RootMeanSquareError,
-                result.Metrics.MeanAbsolutePercentageError?.ToString("F2", CultureInfo.InvariantCulture) ?? "n/a");
+            return null;
         }
 
-        if (result.NextPrediction is { } prediction)
-        {
-            Log.Information("Aggregate next forecast at {Timestamp:yyyy-MM-dd HH:mm}, temperature {Temperature:F2}°C",
-                prediction.Timestamp,
-                prediction.Temperature);
-        }
-        else
-        {
-            Log.Warning("Aggregate next forecast unavailable (insufficient history).");
-        }
-
-        // Collect training stats and write JSON report
-        var stats = processor.GetAndResetTrainingStats();
-        try
-        {
-            var jsonPayload = new
-            {
-                File = jsonFileName,
-                Place = result.Place,
-                Totals = new
-                {
-                    TotalRecords = result.TotalRecords,
-                    TrainingRecords = result.TrainingRecords,
-                    ValidationRecords = result.ValidationRecords
-                },
-                Metrics = result.Metrics is null
-                    ? null
-                    : new
-                    {
-                        MAE = result.Metrics.MeanAbsoluteError,
-                        RMSE = result.Metrics.RootMeanSquareError,
-                        MAPE = result.Metrics.MeanAbsolutePercentageError,
-                        Samples = result.Metrics.Samples
-                    },
-                NextPrediction = result.NextPrediction is null
-                    ? null
-                    : new
-                    {
-                        Timestamp = result.NextPrediction.Timestamp,
-                        Temperature = result.NextPrediction.Temperature
-                    },
-                Training = stats is null
-                    ? null
-                    : new
-                    {
-                        TotalTime = stats.TotalTime,
-                        TotalSteps = stats.TotalSteps,
-                        FinalAverageLoss = stats.FinalAverageLoss,
-                        Epochs = stats.Epochs.Select(e => new
-                        {
-                            e.Epoch,
-                            e.Batches,
-                            e.AverageLoss,
-                            e.EpochElapsed
-                        }).ToList()
-                    },
-                Processing = new
-                {
-                    Duration = FormatDuration(aggregateStopwatch.Elapsed)
-                }
-            };
-
-            await using var jsonStream = File.Open(jsonOutputPath, FileMode.Create, FileAccess.Write, FileShare.None);
-            await System.Text.Json.JsonSerializer.SerializeAsync(jsonStream, jsonPayload, new System.Text.Json.JsonSerializerOptions
-            {
-                WriteIndented = true
-            });
-            Log.Information("Wrote aggregate training stats JSON to {JsonPath}", jsonOutputPath);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to write aggregate training stats JSON");
-        }
-
-        return new AggregateTrainingResult(
-            new ForecastSummary("Aggregate", result, aggregateStopwatch.Elapsed),
-            result);
+        return new AggregateTrainingResult(bestSummary, bestResult);
     }
 
     private sealed record ForecastSummary(string Name, ForecastResult Result, TimeSpan Duration);
