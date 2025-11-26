@@ -96,9 +96,6 @@ try
     Log.Information("  Total parsing time: {TotalTime:F2} seconds", totalTime);
     Log.Information("  Average time per file: {AverageTime:F3} seconds", averageTime);
 
-    LogAllKnownWeatherCharacteristics();
-    LogAllKnownWindDirections();
-
     var normalizedParseResultsByPlace = NormalizeParseResults(
         rawParseResultsByPlace,
         expectedObservationTimes,
@@ -120,6 +117,8 @@ try
     // Write tables to HTML
     using (var htmlWriter = new HtmlLogWriter.HtmlLogWriter(logFilePath, "Historical Weather Data Miner"))
     {
+        LogAllKnownWeatherCharacteristics(htmlWriter);
+        LogAllKnownWindDirections(htmlWriter);
         WriteRowCountDistributionTable(htmlWriter, flattenedRawParseResults);
 
         // Create distribution diagram from the row counts
@@ -447,7 +446,7 @@ static Dictionary<string, SortedDictionary<DateTime, (string FilePath, HtmlParse
 }
 
 
-static void LogAllKnownWeatherCharacteristics()
+static void LogAllKnownWeatherCharacteristics(HtmlLogWriter.HtmlLogWriter htmlWriter)
 {
     var knownCharacteristics = WeatherCharacteristicConverter.GetAllKnownCharacteristics();
 
@@ -457,11 +456,19 @@ static void LogAllKnownWeatherCharacteristics()
         return;
     }
 
-    Log.Information("Known weather characteristics (ordered): {WeatherCharacteristics}", string.Join(", ", knownCharacteristics));
     Log.Information("Total known weather characteristics: {WeatherCharacteristicsCount}", knownCharacteristics.Count);
+
+    var tableData = knownCharacteristics
+        .Select(value => new
+        {
+            Value = value
+        })
+        .ToList();
+
+    htmlWriter.WriteTable(tableData, "Available Weather Characteristics");
 }
 
-static void LogAllKnownWindDirections()
+static void LogAllKnownWindDirections(HtmlLogWriter.HtmlLogWriter htmlWriter)
 {
     var mappings = Historical.Weather.Core.WindDirectionAzimuthConverter.GetAllKnownDirectionMappings();
 
@@ -471,9 +478,16 @@ static void LogAllKnownWindDirections()
         return;
     }
 
-    var formatted = string.Join(", ", mappings.Select(m => $"{m.Name}={m.Azimuth}°"));
-    Log.Information("Known wind directions (name=azimuth): {WindDirections}", formatted);
     Log.Information("Total known wind directions: {WindDirectionsCount}", mappings.Count);
+
+    var tableData = mappings
+        .Select(mapping => new
+        {
+            Value = $"{mapping.Name}={mapping.Azimuth}°"
+        })
+        .ToList();
+
+    htmlWriter.WriteTable(tableData, "Available Wind Directions");
 }
 
 static bool TryInterpolateMissingObservationTimes(

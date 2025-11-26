@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text;
+using System.Linq;
 using ScottPlot;
 
 namespace HtmlLogWriter;
@@ -75,6 +76,9 @@ public class HtmlLogWriter : IDisposable
         _fileHandler.WriteLine("                <thead>");
         _fileHandler.Write("                    <tr>");
         
+        // Always write row number column first
+        _fileHandler.Write("<th>#</th>");
+        
         foreach (var prop in properties)
         {
             var displayName = SplitPascalCase(prop.Name);
@@ -93,9 +97,13 @@ public class HtmlLogWriter : IDisposable
         // Write table body
         _fileHandler.WriteLine("                <tbody>");
         
-        foreach (var item in itemsList)
+        for (int rowIndex = 0; rowIndex < itemsList.Count; rowIndex++)
         {
+            var item = itemsList[rowIndex];
             _fileHandler.Write("                    <tr>");
+            
+            // Always write row number column first (1-based index)
+            _fileHandler.Write($"<td>{rowIndex + 1}</td>");
             
             foreach (var prop in properties)
             {
